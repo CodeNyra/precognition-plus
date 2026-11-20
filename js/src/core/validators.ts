@@ -1,44 +1,78 @@
 import type { RuleContext, RuleValidator, RuleValidators } from './types'
-import { isFile, isNumeric, isPlainObject, phpStringEquals, toPhpString } from './utils'
-
-const isStringy = (value: unknown): value is string | number =>
-  typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))
-
-function measure(value: unknown, context: RuleContext): number {
-  if (context.field.type === 'numeric' && isNumeric(value)) return Number(value)
-  if (Array.isArray(value)) return value.length
-  if (isFile(value)) return value.size / 1024
-  if (isPlainObject(value)) return Object.keys(value).length
-  return [...toPhpString(value)].length
-}
-
-const param = (rule: { params: string[] }, index = 0) => Number(rule.params[index])
-
-const required: RuleValidator = (value) =>
-  !(
-    value === null ||
-    value === undefined ||
-    (typeof value === 'string' && value.trim() === '') ||
-    (Array.isArray(value) && value.length === 0) ||
-    (isPlainObject(value) && Object.keys(value).length === 0)
-  )
-
-const integer: RuleValidator = (value) =>
-  value === true ||
-  (typeof value === 'number' && Number.isInteger(value)) ||
-  (typeof value === 'string' && /^\s*[+-]?(0|[1-9]\d*)\s*$/.test(value))
+import { isFile, isNumeric, isPlainObject, phpStringEquals, phpText } from './utils'
 
 // The engine sends a field to the server when one of its checks throws.
 const askServer = (): never => {
   throw new Error('Left to the server')
 }
 
-// What PHP's (string) makes of the value Laravel receives, or undefined where the browser can't be
-// sure: PHP writes fractions and large numbers its own way, and files and arrays aren't text.
-function phpText(value: unknown): string | undefined {
-  if (typeof value === 'string') return value
-  if (typeof value === 'boolean' || value === null || value === undefined) return toPhpString(value)
-  return Number.isSafeInteger(value) ? String(value) : undefined
+// The text of a string, or of a number PHP writes the same way, for the rules that read numbers as
+// text. A number PHP could write differently goes to the server, and other values have no text.
+const textOf = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : typeof value === 'number' ? (phpText(value) ?? askServer()) : undefined
+
+// PHP's trim(), which removes only spaces, tabs, line breaks, NUL and \v.
+const phpTrim = (text: string) => text.replace(/^[ \t\n\r\0\v]+|[ \t\n\r\0\v]+$/g, '')
+
+const param = (rule: { params: string[] }, index = 0) => Number(rule.params[index])
+
+// An exact decimal, as brick/math compares them: its digits as a whole number, and how many of
+// them come after the point.
+type Decimal = { digits: bigint; scale: number }
+
+// A plain decimal, like 12, -0.5, 1. or .5. Anything else is left to the server.
+function decimal(text: string): Decimal {
+  const match = /^([+-]?)(\d*)\.?(\d*)$/.exec(text)
+  if (!match || match[2] + match[3] === '') return askServer()
+  return { digits: BigInt(match[2] + match[3]) * (match[1] === '-' ? -1n : 1n), scale: match[3].length }
+}
+
+function compare(a: Decimal, b: Decimal): number {
+  const scale = Math.max(a.scale, b.scale)
+  const x = a.digits * 10n ** BigInt(scale - a.scale)
+  const y = b.digits * 10n ** BigInt(scale - b.scale)
+  return x === y ? 0 : x < y ? -1 : 1
+}
+
+// getSize(): the number itself in a numeric field, the items of a list, the kilobytes of a file,
+// and the characters of anything else.
+function sizeOf(value: unknown, context: RuleContext): Decimal {
+  if (context.field.type === 'numeric' && isNumeric(value)) {
+    const text = typeof value === 'number' ? (phpText(value) ?? askServer()) : phpTrim(value as string)
+    // An exponent goes through a range check that apps can change.
+    return /[eE]/.test(text) ? askServer() : decimal(text)
+  }
+  if (Array.isArray(value)) return { digits: BigInt(value.length), scale: 0 }
+  if (isPlainObject(value)) return { digits: BigInt(Object.keys(value).length), scale: 0 }
+  // Bytes / 1024 has at most 10 decimals: bytes * 5^10 / 10^10.
+  if (isFile(value)) return { digits: BigInt(value.size) * 9765625n, scale: 10 }
+  return { digits: BigInt([...(phpText(value) ?? askServer())].length), scale: 0 }
+}
+
+// How a value's size compares with a rule's parameter. PHP first writes the kilobytes of a file
+// with 14 significant digits, which can't change a comparison with a whole number below 10 TB.
+function sizeComparedTo(value: unknown, param: string, context: RuleContext): number {
+  if (isFile(value) && (!/^-?\d+$/.test(param) || value.size >= 1e13)) return askServer()
+  return compare(sizeOf(value, context), decimal(param))
+}
+
+const required: RuleValidator = (value) =>
+  !(
+    value === null ||
+    value === undefined ||
+    (typeof value === 'string' && phpTrim(value) === '') ||
+    (Array.isArray(value) && value.length === 0) ||
+    (isPlainObject(value) && Object.keys(value).length === 0)
+  )
+
+// filter_var(FILTER_VALIDATE_INT): a whole number within PHP's 64 bits, without leading zeros, with
+// only spaces, tabs, line breaks and \v around it. PHP writes a fraction as text with its own
+// precision before checking it, so a fraction goes to the server.
+const integer: RuleValidator = (value) => {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isInteger(value) ? phpText(value) !== undefined : askServer()
+  const match = typeof value === 'string' ? /^[ \t\n\r\v]*([+-]?(?:0|[1-9]\d*))[ \t\n\r\v]*$/.exec(value) : null
+  return match !== null && BigInt(match[1]) >= -(2n ** 63n) && BigInt(match[1]) < 2n ** 63n
 }
 
 // Laravel's in rule. With the array rule, each item of a list must match an option's text exactly.
@@ -56,8 +90,13 @@ function isIn(value: unknown, options: string[], context: RuleContext): boolean 
   return options.some((option) => phpStringEquals(text, option)) ? askServer() : false
 }
 
-const pattern = (unicode: RegExp, ascii: RegExp, accepts: (value: unknown) => boolean): RuleValidator => (value, rule) =>
-  accepts(value) && (rule.params[0] === 'ascii' ? ascii : unicode).test(String(value))
+// alpha only reads strings, alpha_dash and alpha_num numbers too.
+const pattern =
+  (unicode: RegExp, ascii: RegExp, readsNumbers: boolean): RuleValidator =>
+  (value, rule) => {
+    const text = readsNumbers ? textOf(value) : typeof value === 'string' ? value : undefined
+    return text !== undefined && (rule.params[0] === 'ascii' ? ascii : unicode).test(text)
+  }
 
 // starts_with and its kind changed twice inside the supported releases. Up to Laravel 13.3 they
 // read any value as text, and null as none. 13.4 to 13.9 fail everything but strings, and 13.10 on
@@ -69,7 +108,7 @@ const affix =
     const answer = (text: string) => rule.params.some((needle) => needle !== '' && matches(text, needle)) !== negated
     if (typeof value === 'string') return answer(value)
     if (value === null && !negated) return false
-    const text = typeof value === 'boolean' || Number.isSafeInteger(value) ? toPhpString(value) : undefined
+    const text = typeof value === 'boolean' || typeof value === 'number' ? phpText(value) : undefined
     return text !== undefined && !answer(text) ? false : askServer()
   }
 
@@ -82,9 +121,9 @@ const digitLength = (text: string) => (/^[0-9]*$/.test(text) ? text.length : NaN
 const digitCount =
   (fits: (length: number, rule: { params: string[] }) => boolean): RuleValidator =>
   (value, rule) => {
-    if (typeof value === 'string' || Number.isSafeInteger(value)) return fits(digitLength(String(value)), rule)
+    if (typeof value === 'string' || typeof value === 'number') return fits(digitLength(textOf(value) ?? ''), rule)
     if (isFile(value)) return false
-    if ((value === null || typeof value === 'boolean') && !fits(digitLength(toPhpString(value)), rule)) return false
+    if ((value === null || typeof value === 'boolean') && !fits(digitLength(phpText(value) ?? ''), rule)) return false
     return askServer()
   }
 
@@ -106,28 +145,31 @@ export const validators: RuleValidators = {
   boolean: (value) => [true, false, 0, 1, '0', '1'].includes(value as never),
   accepted: (value) => ['yes', 'on', '1', 1, true, 'true'].includes(value as never),
   declined: (value) => ['no', 'off', '0', 0, false, 'false'].includes(value as never),
-  min: (value, rule, context) => measure(value, context) >= param(rule),
-  max: (value, rule, context) => measure(value, context) <= param(rule),
-  between: (value, rule, context) => {
-    const actual = measure(value, context)
-    return actual >= param(rule, 0) && actual <= param(rule, 1)
-  },
-  size: (value, rule, context) => measure(value, context) === param(rule),
-  digits: (value, rule) => {
-    if (typeof value === 'string' || Number.isSafeInteger(value)) return digitLength(String(value)) === param(rule)
-    return typeof value === 'number' ? askServer() : false
-  },
+  min: (value, rule, context) => sizeComparedTo(value, rule.params[0], context) >= 0,
+  max: (value, rule, context) => sizeComparedTo(value, rule.params[0], context) <= 0,
+  between: (value, rule, context) =>
+    sizeComparedTo(value, rule.params[0], context) >= 0 && sizeComparedTo(value, rule.params[1], context) <= 0,
+  size: (value, rule, context) => sizeComparedTo(value, rule.params[0], context) === 0,
+  digits: (value, rule) =>
+    (typeof value === 'string' || typeof value === 'number') && digitLength(textOf(value) ?? '') === param(rule),
   digits_between: digitCount((length, rule) => length >= param(rule, 0) && length <= param(rule, 1)),
   min_digits: digitCount((length, rule) => length >= param(rule)),
   max_digits: digitCount((length, rule) => length <= param(rule)),
+  // PHP's $ also matches before a final line break, which only a field that isn't trimmed can have.
   decimal: (value, rule) => {
-    const places = isNumeric(value) ? /^[+-]?\d*\.?(\d*)$/.exec(toPhpString(value))?.[1].length : undefined
+    const places = isNumeric(value) ? /^[+-]?\d*\.?(\d*)\n?$/.exec(textOf(value) ?? '')?.[1].length : undefined
     if (places === undefined) return false
     return rule.params.length < 2 ? places === param(rule) : places >= param(rule, 0) && places <= param(rule, 1)
   },
   email: (value) => typeof value === 'string' && /^[^\s@]+@[^\s@]+$/.test(value),
-  regex: (value, rule) => isStringy(value) && new RegExp(rule.params[0], rule.params[1]).test(String(value)),
-  not_regex: (value, rule) => isStringy(value) && !new RegExp(rule.params[0], rule.params[1]).test(String(value)),
+  regex: (value, rule) => {
+    const text = textOf(value)
+    return text !== undefined && new RegExp(rule.params[0], rule.params[1]).test(text)
+  },
+  not_regex: (value, rule) => {
+    const text = textOf(value)
+    return text !== undefined && !new RegExp(rule.params[0], rule.params[1]).test(text)
+  },
   in: (value, rule, context) => isIn(value, rule.params, context),
   not_in: (value, rule, context) => !isIn(value, rule.params, context),
   // Rule::enum(). tryFrom() turns numbers and booleans into integers first, and numeric strings
@@ -136,14 +178,14 @@ export const validators: RuleValidators = {
     if (value === null || Array.isArray(value) || isPlainObject(value)) return false
     const number = typeof value === 'boolean' ? Number(value) : value
     return (
-      rule.params.some((option) => phpStringEquals(toPhpString(value), option)) ||
+      rule.params.some((option) => phpStringEquals(phpText(value) ?? String(value), option)) ||
       (isNumeric(number) && rule.params.includes(String(Math.trunc(Number(number)))))
     )
   },
   confirmed: (value, rule, context) => value === context.other(rule.params[0]),
-  alpha: pattern(/^[\p{L}\p{M}]+$/u, /^[a-zA-Z]+$/, (value) => typeof value === 'string'),
-  alpha_dash: pattern(/^[\p{L}\p{M}\p{N}_-]+$/u, /^[a-zA-Z0-9_-]+$/, isStringy),
-  alpha_num: pattern(/^[\p{L}\p{M}\p{N}]+$/u, /^[a-zA-Z0-9]+$/, isStringy),
+  alpha: pattern(/^[\p{L}\p{M}]+$/u, /^[a-zA-Z]+$/, false),
+  alpha_dash: pattern(/^[\p{L}\p{M}\p{N}_-]+$/u, /^[a-zA-Z0-9_-]+$/, true),
+  alpha_num: pattern(/^[\p{L}\p{M}\p{N}]+$/u, /^[a-zA-Z0-9]+$/, true),
   // A list makes Laravel throw an error up to 13.3, and fail after, so the server answers it.
   lowercase: (value) => (Array.isArray(value) || isPlainObject(value) ? askServer() : typeof value === 'string' && value.toLowerCase() === value),
   uppercase: (value) => (Array.isArray(value) || isPlainObject(value) ? askServer() : typeof value === 'string' && value.toUpperCase() === value),

@@ -38,6 +38,12 @@ final class SchemaBuilder
     /** Rules that check something else with parameters, like integer:strict or uuid:4. Those go to the server. */
     private const NO_PARAMS = ['Required', 'String', 'Numeric', 'Integer', 'Boolean', 'Uuid'];
 
+    /** How many parameters the size and digit rules need. Laravel throws an error with fewer. */
+    private const NUMBER_PARAMS = [
+        'Min' => 1, 'Max' => 1, 'Size' => 1, 'Between' => 2,
+        'Digits' => 1, 'DigitsBetween' => 2, 'MinDigits' => 1, 'MaxDigits' => 1, 'Decimal' => 1,
+    ];
+
     /** Rules whose first parameter is another field, as in required_if:type,business. */
     private const FIRST_PARAMETER_IS_A_FIELD = [
         'After', 'AfterOrEqual', 'Before', 'BeforeOrEqual', 'DateEquals', 'Different', 'Same',
@@ -133,10 +139,22 @@ final class SchemaBuilder
         }
 
         $resolver->useRules($attribute, array_column($parsed, 2));
+        $names = array_column($parsed, 0);
         $type = $resolver->sizeType($attribute);
+        $serverOnly = [];
+
         // Laravel's in checks a list item by item only when the field has the array rule. The
         // browser goes by the size type, which list, the numeric rules and the file rules set too.
-        $listsAgree = in_array('Array', array_column($parsed, 0), true) === ($type === 'array');
+        if (in_array('Array', $names, true) !== ($type === 'array')) {
+            array_push($serverOnly, 'In', 'NotIn');
+        }
+
+        // getSize() reads a numeric value as a number whenever a numeric rule is there, even in a
+        // field the browser measures as a file.
+        if ($type === 'file' && array_intersect(['Numeric', 'Integer', 'Decimal'], $names) !== []) {
+            array_push($serverOnly, 'Min', 'Max', 'Between', 'Size');
+        }
+
         $client = [];
 
         foreach ($parsed as [$name, $parameters]) {
@@ -148,7 +166,7 @@ final class SchemaBuilder
                 continue;
             }
 
-            $clientRule = $this->clientRule($attribute, $name, $parameters, $listsAgree);
+            $clientRule = in_array($name, $serverOnly, true) ? null : $this->clientRule($attribute, $name, $parameters);
 
             if ($clientRule === null) {
                 $server = true;
@@ -205,7 +223,7 @@ final class SchemaBuilder
     }
 
     /** @return array{rule: string, params: list<string>}|null */
-    private function clientRule(string $attribute, string $name, array $parameters, bool $listsAgree): ?array
+    private function clientRule(string $attribute, string $name, array $parameters): ?array
     {
         if (! in_array($name, self::CLIENT_RULES, true)) {
             return null;
@@ -216,12 +234,27 @@ final class SchemaBuilder
 
         return match (true) {
             in_array($name, self::NO_PARAMS, true) => $parameters === [] ? $rule : null,
-            in_array($name, ['In', 'NotIn'], true) && ! $listsAgree => null,
+            isset(self::NUMBER_PARAMS[$name]) => $this->plainNumbers($name, $parameters) ? $rule : null,
             $name === 'Email' => array_diff($parameters, ['rfc']) === [] ? $rule : null,
             $name === 'Confirmed' => ['rule' => 'confirmed', 'params' => [$parameters[0] ?? $attribute.'_confirmation']],
             $name === 'Regex', $name === 'NotRegex' => $this->regex($rule['rule'], $parameters[0] ?? ''),
             default => $rule,
         };
+    }
+
+    /**
+     * The size rules compare with plain decimals and the digit rules with whole numbers. PHP also
+     * has to write a file's kilobytes with at least its default 14 digits for sizes to compare
+     * the same in the browser.
+     */
+    private function plainNumbers(string $name, array $parameters): bool
+    {
+        $sizes = in_array($name, ['Min', 'Max', 'Size', 'Between'], true);
+        $precision = (int) ini_get('precision');
+
+        return count($parameters) >= self::NUMBER_PARAMS[$name]
+            && preg_grep($sizes ? '/^-?\d+(\.\d+)?$/' : '/^\d+$/', $parameters, PREG_GREP_INVERT) === []
+            && (! $sizes || $precision >= 14 || $precision === -1);
     }
 
     private function regex(string $rule, string $pattern): ?array

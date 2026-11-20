@@ -21,10 +21,9 @@
   - `email` is checked more loosely than Laravel checks it;
   - `Rule::enum()` also accepts a number written another way, like `01` for
     `1`, for an enum backed by strings;
-  - a number with more than 14 significant digits, or a whole number beyond
-    2^53, can be judged differently, since PHP writes it with 14 digits;
   - `regex` patterns with `.` or `\s`, or with `\d`, `\w` or `\b` and the `u`
-    flag, can match differently in JavaScript;
+    flag, can match differently in JavaScript, and so can `$` before a final
+    line break in a field that isn't trimmed;
   - the browser can't tell when PHP refuses an upload, for example one larger
     than `upload_max_filesize`;
   - when a form sends files, numbers and `true`/`false` reach Laravel as text,

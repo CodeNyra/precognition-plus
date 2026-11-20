@@ -8,8 +8,8 @@ import { field } from './fixtures'
 const passes = (rule: string, value: unknown, params: string[] = [], extra = {}, data: Record<string, unknown> = {}) =>
   checkField({ x: field([[rule, params]], extra) }, validators, 'x', { ...data, x: value }).message === null
 
-const outcome = (rule: string, value: unknown, params: string[] = [], extra = {}) => {
-  const result = checkField({ x: field([[rule, params]], extra) }, validators, 'x', { x: value })
+const outcome = (rule: string, value: unknown, params: string[] = [], extra = {}, attribute = 'x') => {
+  const result = checkField({ [attribute]: field([[rule, params]], extra) }, validators, attribute, { [attribute]: value })
   return result.message !== null ? 'fail' : result.server ? 'server' : 'pass'
 }
 
@@ -136,6 +136,39 @@ describe('rules mirror Laravel', () => {
     expect(passes('between', '😀😀', ['2', '2'])).toBe(true)
   })
 
+  it('reads numbers the way PHP receives and writes them', () => {
+    // A whole number arrives as an integer, within 64 bits.
+    expect(outcome('integer', 2 ** 60)).toBe('pass')
+    expect(outcome('integer', 2 ** 63)).toBe('fail')
+    expect(outcome('integer', '9223372036854775807')).toBe('pass')
+    expect(outcome('integer', '9223372036854775808')).toBe('fail')
+    expect(outcome('integer', '\f42', [], {}, 'password')).toBe('fail')
+    // PHP writes a fraction with its own precision, so rules that read it as text ask the server.
+    expect(outcome('integer', 1.5)).toBe('server')
+    expect(outcome('regex', 1.5, ['^\\d+$', ''])).toBe('server')
+    expect(outcome('regex', 123, ['^\\d+$', ''])).toBe('pass')
+    expect(outcome('decimal', 9.99, ['2'])).toBe('server')
+    expect(outcome('decimal', '9.99', ['2'])).toBe('pass')
+    expect(outcome('min', 1.5, ['2'])).toBe('server')
+    // NaN and Infinity arrive as null.
+    expect(outcome('required', Number.NaN)).toBe('fail')
+  })
+
+  it('compares sizes exactly, as brick/math does', () => {
+    expect(outcome('max', '0.30000000000000001', ['0.3'], { type: 'numeric' })).toBe('fail')
+    expect(outcome('size', '0.3', ['0.30'], { type: 'numeric' })).toBe('pass')
+    // JSON writes 2 ** 60 as 1152921504606847000, and that is the integer Laravel gets.
+    expect(outcome('max', 2 ** 60, ['1152921504606847000'], { type: 'numeric' })).toBe('pass')
+    expect(outcome('max', 2 ** 60, ['1152921504606846999'], { type: 'numeric' })).toBe('fail')
+    // An exponent goes through a range check that apps can change.
+    expect(outcome('max', '1e5', ['10'], { type: 'numeric' })).toBe('server')
+
+    const file = new File(['a'.repeat(1500)], 'photo.jpg')
+    expect(outcome('max', file, ['1'])).toBe('fail')
+    expect(outcome('max', file, ['2'])).toBe('pass')
+    expect(outcome('min', file, ['1.5'])).toBe('server')
+  })
+
   it('matches in options as the text PHP gives the value', () => {
     expect(outcome('in', 'b', ['a', 'b'])).toBe('pass')
     expect(outcome('in', true, ['1'])).toBe('pass')
@@ -173,6 +206,18 @@ describe('the engine', () => {
     expect(passes('max', 'ㅤabc‍\u{E0020}', ['3'])).toBe(true)
     expect(passes('max', 'ab‍c', ['3'])).toBe(false)
     expect(normalize(' secret ', 'password')).toBe(' secret ')
+  })
+
+  it('skips all but the implicit rules for text that PHP trims to nothing', () => {
+    expect(outcome('min', '   ', ['8'], {}, 'password')).toBe('pass')
+    expect(outcome('required', '   ', [], {}, 'password')).toBe('fail')
+    expect(outcome('min', ' ', ['8'], {}, 'password')).toBe('fail')
+  })
+
+  it('asks the server about the whole field once a rule cannot be checked here', () => {
+    // On releases where in fails, Laravel shows its message, not the one of max.
+    const result = checkField({ x: field([['in', ['1', '2']], ['max', ['1']]]) }, validators, 'x', { x: '01' })
+    expect(result).toEqual({ message: null, server: true })
   })
 
   it('skips non-implicit rules for a missing value', () => {

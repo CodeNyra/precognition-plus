@@ -53,7 +53,7 @@ group them, and each is listed once.
 | `json` | Server | Not in the browser yet. |
 | `lowercase`, `uppercase` | Browser | A list goes to the server, since releases before 13.4 throw an error for it. |
 | `mac_address` | Server | Not in the browser yet. |
-| `min`, `max`, `size` | Browser | Measured like Laravel: characters for strings, the value for numeric fields (with `numeric`, `integer` or `decimal`), items for arrays, and kilobytes for files. |
+| `min`, `max`, `size` | Browser | Measured like Laravel: characters for strings, the value for numeric fields (with `numeric`, `integer` or `decimal`), items for arrays, and kilobytes for files. Compared exactly, as Laravel compares them. With a parameter that isn't a plain number, like `max:1e3`, they go to the server, and so do sizes of files with a parameter that isn't whole, like `max:0.5`. |
 | `regex`, `not_regex` | Browser | When JavaScript reads the pattern the same way. See [Regular expressions](#regular-expressions). |
 | `starts_with`, `ends_with`, `doesnt_start_with`, `doesnt_end_with` | Browser | Releases treat values that aren't text differently, so an empty field, a number or `true` goes to the server when they would disagree. |
 | `string` | Browser | |
@@ -171,6 +171,18 @@ middleware does: strings are trimmed (`TrimStrings`) and empty strings become
 It trims the same characters as Laravel's `Str::trim()`: whitespace, NUL, and
 the invisible characters in `Str::INVISIBLE_CHARACTERS`, such as the
 zero-width space, the byte order mark and the soft hyphen.
+
+`password` and the other fields `TrimStrings` leaves alone can hold only
+spaces. Laravel then runs only `required`, `accepted` and `declined` on them,
+and so does the browser.
+
+A number from a number input reaches Laravel the way JSON writes it. A whole
+number arrives as an integer and is checked in the browser. A fraction, like
+`9.99`, or a number beyond 64 bits arrives as a float, which PHP writes as
+text with its `precision` setting. So rules that read it as text or compare
+it, like `regex`, `integer`, `decimal` or `max`, leave it to the server.
+Numbers typed as text are compared exactly in the browser, except ones
+written with an exponent, like `1e5`, which go to the server.
 
 ## Messages
 

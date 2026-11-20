@@ -123,6 +123,33 @@ it('sends the value-only rules to the browser', function () {
         ->and($schema['choices']['rules'][0]['rule'])->toBe('in');
 });
 
+it('sends size and digit rules with plain numbers only', function () {
+    $schema = schemaFor([
+        'price' => 'numeric|max:9.99',
+        'exponent' => 'max:1e3',
+        'short' => 'between:1',
+        'code' => 'digits:4.5',
+        'upload' => 'file|integer|max:100',
+    ]);
+
+    expect($schema['price']['rules'][1])->toMatchArray(['rule' => 'max', 'params' => ['9.99']])
+        ->and($schema['exponent'])->toMatchArray(['rules' => [], 'server' => true])
+        ->and($schema['short'])->toMatchArray(['rules' => [], 'server' => true])
+        ->and($schema['code'])->toMatchArray(['rules' => [], 'server' => true])
+        ->and(array_column($schema['upload']['rules'], 'rule'))->toBe(['file', 'integer'])
+        ->and($schema['upload']['server'])->toBeTrue();
+});
+
+it('leaves sizes to the server when PHP writes numbers with fewer than 14 digits', function () {
+    $precision = ini_set('precision', '10');
+
+    try {
+        expect(schemaFor(['name' => 'max:20'])['name'])->toMatchArray(['rules' => [], 'server' => true]);
+    } finally {
+        ini_set('precision', $precision);
+    }
+});
+
 it('reads rule objects that stand for plain rules', function () {
     $schema = schemaFor([
         'role' => ['required', Rule::notIn(['root'])],
