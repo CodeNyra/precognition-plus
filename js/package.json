@@ -1,10 +1,10 @@
 {
   "name": "precognition-plus",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Checks common Laravel FormRequest rules in the browser for Precognition forms, and only asks the server for rules that need it.",
   "license": "MIT",
   "author": "CodeNyra",
-  "homepage": "https://github.com/codenyra/precognition-plus#readme",
+  "homepage": "https://precognition.codenyra.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/codenyra/precognition-plus.git",

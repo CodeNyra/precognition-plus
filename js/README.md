@@ -30,3 +30,6 @@ Anyone who can submit a form can read its browser rules, including `in`
 lists and `regex` patterns. The
 [documentation](https://github.com/codenyra/precognition-plus/tree/main/docs)
 says which rules run where, and how to keep one on the server.
+
+The [live demo](https://precognition.codenyra.com) has a signup form with
+each kind of field and a log of every check.
