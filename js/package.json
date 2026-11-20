@@ -1,0 +1,61 @@
+{
+  "name": "precognition-plus",
+  "version": "0.1.0",
+  "description": "Checks common Laravel FormRequest rules in the browser for Precognition forms, and only asks the server for rules that need it.",
+  "license": "MIT",
+  "author": "CodeNyra",
+  "homepage": "https://github.com/codenyra/precognition-plus#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codenyra/precognition-plus.git",
+    "directory": "js"
+  },
+  "bugs": {
+    "url": "https://github.com/codenyra/precognition-plus/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "laravel-precognition": "^2.1"
+  },
+  "devDependencies": {
+    "@inertiajs/react": "^3.11",
+    "@inertiajs/vue3": "^3.11",
+    "@types/react": "^19.0",
+    "@types/react-dom": "^19.0",
+    "jsdom": "^25.0.1",
+    "laravel-precognition": "^2.1.1",
+    "react": "^19.0",
+    "react-dom": "^19.0",
+    "tsup": "^8.0",
+    "typescript": "^5.6",
+    "vitest": "^2.1",
+    "vue": "^3.5"
+  },
+  "keywords": [
+    "laravel",
+    "inertia",
+    "precognition",
+    "validation",
+    "vue",
+    "react",
+    "svelte"
+  ]
+}

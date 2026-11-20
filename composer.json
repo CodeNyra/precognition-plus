@@ -1,0 +1,60 @@
+{
+    "name": "codenyra/precognition-plus",
+    "description": "Checks common Laravel FormRequest rules in the browser for Precognition forms, with Precognition as the fallback for rules that need the server.",
+    "keywords": [
+        "laravel",
+        "inertia",
+        "precognition",
+        "validation",
+        "vue",
+        "react"
+    ],
+    "license": "MIT",
+    "homepage": "https://github.com/codenyra/precognition-plus",
+    "authors": [
+        {
+            "name": "CodeNyra"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/codenyra/precognition-plus/issues",
+        "source": "https://github.com/codenyra/precognition-plus"
+    },
+    "type": "library",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^12.0|^13.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^10.0|^11.0",
+        "pestphp/pest": "^3.0|^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "CodeNyra\\PrecognitionPlus\\": "php/src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "CodeNyra\\PrecognitionPlus\\Tests\\": "php/tests/"
+        }
+    },
+    "scripts": {
+        "test": "pest --test-directory=php/tests"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "CodeNyra\\PrecognitionPlus\\PrecognitionPlusServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
