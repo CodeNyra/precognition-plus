@@ -133,7 +133,10 @@ final class SchemaBuilder
         }
 
         $resolver->useRules($attribute, array_column($parsed, 2));
-        $names = array_column($parsed, 0);
+        $type = $resolver->sizeType($attribute);
+        // Laravel's in checks a list item by item only when the field has the array rule. The
+        // browser goes by the size type, which list, the numeric rules and the file rules set too.
+        $listsAgree = in_array('Array', array_column($parsed, 0), true) === ($type === 'array');
         $client = [];
 
         foreach ($parsed as [$name, $parameters]) {
@@ -145,7 +148,7 @@ final class SchemaBuilder
                 continue;
             }
 
-            $clientRule = $this->clientRule($attribute, $name, $parameters, $names);
+            $clientRule = $this->clientRule($attribute, $name, $parameters, $listsAgree);
 
             if ($clientRule === null) {
                 $server = true;
@@ -160,7 +163,7 @@ final class SchemaBuilder
             'rules' => $client,
             'server' => $server,
             'nullable' => $nullable,
-            'type' => $resolver->sizeType($attribute),
+            'type' => $type,
         ];
 
         if ($depends !== []) {
@@ -201,11 +204,8 @@ final class SchemaBuilder
         return [Str::before($field, '.*')];
     }
 
-    /**
-     * @param  list<string>  $names  All the rules of the field.
-     * @return array{rule: string, params: list<string>}|null
-     */
-    private function clientRule(string $attribute, string $name, array $parameters, array $names): ?array
+    /** @return array{rule: string, params: list<string>}|null */
+    private function clientRule(string $attribute, string $name, array $parameters, bool $listsAgree): ?array
     {
         if (! in_array($name, self::CLIENT_RULES, true)) {
             return null;
@@ -216,8 +216,7 @@ final class SchemaBuilder
 
         return match (true) {
             in_array($name, self::NO_PARAMS, true) => $parameters === [] ? $rule : null,
-            // Laravel's in checks a list item by item only with the array rule, not with list.
-            in_array($name, ['In', 'NotIn'], true) && in_array('List', $names, true) && ! in_array('Array', $names, true) => null,
+            in_array($name, ['In', 'NotIn'], true) && ! $listsAgree => null,
             $name === 'Email' => array_diff($parameters, ['rfc']) === [] ? $rule : null,
             $name === 'Confirmed' => ['rule' => 'confirmed', 'params' => [$parameters[0] ?? $attribute.'_confirmation']],
             $name === 'Regex', $name === 'NotRegex' => $this->regex($rule['rule'], $parameters[0] ?? ''),

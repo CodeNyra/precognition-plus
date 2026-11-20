@@ -12,9 +12,11 @@ field is sent to the server only when they pass. See
 When a server rule names another field, like `required_if:type,business`, the
 field is also sent again whenever that other field changes.
 
-Where the browser can't match Laravel exactly, it leans toward accepting. It
-never rejects a value the server would accept, and the submit still runs
-every rule on the server.
+Where Laravel releases answer a value differently, the browser leaves the
+field to the server, which answers the way its own release does. A few
+differences are still open, listed in
+[Limitations](limitations.md#known-limitations). The submit always runs every
+rule on the server.
 
 ## Every rule
 
@@ -46,14 +48,14 @@ group them, and each is listed once.
 | `email` | Browser | Plain `email` and `email:rfc`, checked leniently so the browser never rejects an address the server accepts. `dns`, `spoof`, `strict` and `filter` go to the server. |
 | `enum` | Browser | `Rule::enum()`. The enum's values are sent as a list. |
 | `hex_color` | Server | Not in the browser yet. |
-| `in`, `not_in` | Browser | Also `Rule::in()` and `Rule::notIn()`. With the `array` rule, each item of a list is checked, as in Laravel. |
+| `in`, `not_in` | Browser | Also `Rule::in()` and `Rule::notIn()`. With the `array` rule, each item of a list is checked, as in Laravel. A value that only a loose comparison matches, like `01` for `1`, goes to the server, because Laravel compares loosely before 12.67 and 13.26 and exactly after. |
 | `ip`, `ipv4`, `ipv6` | Server | Not in the browser yet. |
 | `json` | Server | Not in the browser yet. |
-| `lowercase`, `uppercase` | Browser | |
+| `lowercase`, `uppercase` | Browser | A list goes to the server, since releases before 13.4 throw an error for it. |
 | `mac_address` | Server | Not in the browser yet. |
 | `min`, `max`, `size` | Browser | Measured like Laravel: characters for strings, the value for numeric fields (with `numeric`, `integer` or `decimal`), items for arrays, and kilobytes for files. |
 | `regex`, `not_regex` | Browser | When JavaScript reads the pattern the same way. See [Regular expressions](#regular-expressions). |
-| `starts_with`, `ends_with`, `doesnt_start_with`, `doesnt_end_with` | Browser | |
+| `starts_with`, `ends_with`, `doesnt_start_with`, `doesnt_end_with` | Browser | Releases treat values that aren't text differently, so an empty field, a number or `true` goes to the server when they would disagree. |
 | `string` | Browser | |
 | `ulid` | Browser | |
 | `url` | Server | Not in the browser yet. |
@@ -65,7 +67,7 @@ group them, and each is listed once.
 |---|---|---|
 | `between` | Browser | Measured like `min` and `max`. |
 | `decimal` | Browser | |
-| `digits`, `digits_between`, `min_digits`, `max_digits` | Browser | |
+| `digits`, `digits_between`, `min_digits`, `max_digits` | Browser | Up to 13.3 (13.5 for `digits_between`), the digit counts read an empty field or `true` as text, so those go to the server when releases would disagree. |
 | `gt`, `gte`, `lt`, `lte` | Server | Not in the browser yet. With a field name as their parameter, they read another field. |
 | `integer` | Browser | `integer:strict` goes to the server. |
 | `multiple_of` | Server | Not in the browser yet. |

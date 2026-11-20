@@ -8,6 +8,11 @@ import { field } from './fixtures'
 const passes = (rule: string, value: unknown, params: string[] = [], extra = {}, data: Record<string, unknown> = {}) =>
   checkField({ x: field([[rule, params]], extra) }, validators, 'x', { ...data, x: value }).message === null
 
+const outcome = (rule: string, value: unknown, params: string[] = [], extra = {}) => {
+  const result = checkField({ x: field([[rule, params]], extra) }, validators, 'x', { x: value })
+  return result.message !== null ? 'fail' : result.server ? 'server' : 'pass'
+}
+
 describe('rules mirror Laravel', () => {
   it.each([
     ['required', 'a', true],
@@ -69,20 +74,32 @@ describe('rules mirror Laravel', () => {
     expect(passes('decimal', '1.5', ['1', '3'])).toBe(true)
   })
 
-  it('lets empty values through the digit counts and starts_with, as Laravel 12 does', () => {
-    expect(passes('max_digits', null, ['3'])).toBe(true)
-    expect(passes('doesnt_start_with', null, ['ab'])).toBe(true)
-    expect(passes('digits', null, ['3'])).toBe(false)
+  it('asks the server where Laravel releases answer differently', () => {
+    // in compares loosely up to 12.66 and 13.25, and exactly after.
+    expect(outcome('in', '01', ['1'])).toBe('server')
+    expect(outcome('not_in', '1.0', ['1'])).toBe('server')
+    // The digit counts read null and booleans as text up to 13.3.
+    expect(outcome('max_digits', null, ['3'])).toBe('server')
+    expect(outcome('min_digits', null, ['2'])).toBe('fail')
+    expect(outcome('digits', null, ['3'])).toBe('fail')
+    // starts_with and its kind read null as no text up to 13.3, and fail numbers in 13.4 to 13.9.
+    expect(outcome('doesnt_start_with', null, ['ab'])).toBe('server')
+    expect(outcome('starts_with', null, ['ab'])).toBe('fail')
+    expect(outcome('doesnt_end_with', 123, ['4'])).toBe('server')
+    expect(outcome('starts_with', 123, ['4'])).toBe('fail')
+    // lowercase and uppercase throw an error for a list up to 13.3.
+    expect(outcome('lowercase', ['a'])).toBe('server')
   })
 
-  it('compares not_in exactly, and lists item by item only with the array rule', () => {
-    expect(passes('not_in', 'b', ['a', 'b'])).toBe(false)
-    expect(passes('not_in', '01', ['1'])).toBe(true)
-    expect(passes('in', ['a', 'b'], ['a', 'b'], { type: 'array' })).toBe(true)
-    expect(passes('in', ['a', 'c'], ['a', 'b'], { type: 'array' })).toBe(false)
-    expect(passes('in', ['a'], ['a'])).toBe(false)
-    expect(passes('not_in', ['a'], ['a'])).toBe(true)
-    expect(passes('not_in', [' a '], ['a'], { type: 'array' })).toBe(false)
+  it('checks lists item by item, exactly, and only with the array rule', () => {
+    expect(outcome('not_in', 'b', ['a', 'b'])).toBe('fail')
+    expect(outcome('not_in', 'c', ['a', 'b'])).toBe('pass')
+    expect(outcome('in', ['a', 'b'], ['a', 'b'], { type: 'array' })).toBe('pass')
+    expect(outcome('in', ['a', 'c'], ['a', 'b'], { type: 'array' })).toBe('fail')
+    expect(outcome('in', ['01'], ['1'], { type: 'array' })).toBe('fail')
+    expect(outcome('in', ['a'], ['a'])).toBe('fail')
+    expect(outcome('not_in', ['a'], ['a'])).toBe('pass')
+    expect(outcome('not_in', [' a '], ['a'], { type: 'array' })).toBe('fail')
   })
 
   it('matches Rule::enum() values the way tryFrom() reads them', () => {
@@ -97,7 +114,6 @@ describe('rules mirror Laravel', () => {
     expect(passes('starts_with', 'abc', ['x', 'ab'])).toBe(true)
     expect(passes('ends_with', 'abc', ['b'])).toBe(false)
     expect(passes('doesnt_start_with', 'admin1', ['admin'])).toBe(false)
-    expect(passes('doesnt_end_with', 123, ['4'])).toBe(true)
     expect(passes('not_regex', 'Admin1', ['^admin', 'i'])).toBe(false)
     expect(passes('alpha', 'héllo', ['ascii'])).toBe(false)
   })
@@ -120,11 +136,12 @@ describe('rules mirror Laravel', () => {
     expect(passes('between', '😀😀', ['2', '2'])).toBe(true)
   })
 
-  it('compares in with PHP equality', () => {
-    expect(passes('in', 'b', ['a', 'b'])).toBe(true)
-    expect(passes('in', '01', ['1'])).toBe(true)
-    expect(passes('in', true, ['1'])).toBe(true)
-    expect(passes('in', 'c', ['a', 'b'])).toBe(false)
+  it('matches in options as the text PHP gives the value', () => {
+    expect(outcome('in', 'b', ['a', 'b'])).toBe('pass')
+    expect(outcome('in', true, ['1'])).toBe('pass')
+    expect(outcome('in', 'c', ['a', 'b'])).toBe('fail')
+    // PHP writes fractions its own way, so the server compares them.
+    expect(outcome('in', 2.5, ['2.5'])).toBe('server')
   })
 
   it('checks the confirmation field', () => {

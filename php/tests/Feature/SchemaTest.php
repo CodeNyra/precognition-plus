@@ -102,6 +102,8 @@ it('sends the value-only rules to the browser', function () {
         'id' => 'uuid',
         'versioned' => 'uuid:4',
         'tags' => 'list|in:a,b',
+        'scores' => 'array|numeric|in:1,2',
+        'choices' => 'array|in:a,b',
     ]);
 
     expect(array_column($schema['username']['rules'], 'rule'))->toBe(['required', 'alpha_dash', 'starts_with', 'size'])
@@ -114,7 +116,11 @@ it('sends the value-only rules to the browser', function () {
         ->and($schema['avatar'])->toMatchArray(['server' => false, 'type' => 'file'])
         ->and($schema['id']['rules'][0]['rule'])->toBe('uuid')
         ->and($schema['versioned'])->toMatchArray(['rules' => [], 'server' => true])
-        ->and($schema['tags'])->toMatchArray(['rules' => [], 'server' => true]);
+        ->and($schema['tags'])->toMatchArray(['rules' => [], 'server' => true])
+        ->and(array_column($schema['scores']['rules'], 'rule'))->toBe(['numeric'])
+        ->and($schema['scores']['server'])->toBeTrue()
+        ->and($schema['choices']['type'])->toBe('array')
+        ->and($schema['choices']['rules'][0]['rule'])->toBe('in');
 });
 
 it('reads rule objects that stand for plain rules', function () {

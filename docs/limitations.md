@@ -15,11 +15,20 @@
   learned once, from the form's first request. Write them as Laravel rules
   such as `required_if` instead (see
   [the usage guide](usage.md#rules-that-depend-on-other-fields)).
-- Where the browser can't match Laravel exactly, it is lenient on purpose and
-  never blocks a value the server accepts. `email` is checked loosely, `in`
-  also takes a number written another way (`01` for `1`), and where Laravel
-  releases disagree, the browser accepts what any of them does. So a few values
-  pass in the browser and fail on submit.
+- The browser answers the way Laravel does, or leaves the field to the server
+  where releases disagree. These differences are still open, so a few values
+  pass or fail in the browser and get another answer on submit:
+  - `email` is checked more loosely than Laravel checks it;
+  - `Rule::enum()` also accepts a number written another way, like `01` for
+    `1`, for an enum backed by strings;
+  - a number with more than 14 significant digits, or a whole number beyond
+    2^53, can be judged differently, since PHP writes it with 14 digits;
+  - `regex` patterns with `.` or `\s`, or with `\d`, `\w` or `\b` and the `u`
+    flag, can match differently in JavaScript;
+  - the browser can't tell when PHP refuses an upload, for example one larger
+    than `upload_max_filesize`;
+  - when a form sends files, numbers and `true`/`false` reach Laravel as text,
+    and the browser still checks them as numbers and booleans.
 - Anything outside Precognition that watches precognitive responses (logging,
   monitoring) sees the first request of each form as a `200` with a JSON body
   instead of a `204`.
