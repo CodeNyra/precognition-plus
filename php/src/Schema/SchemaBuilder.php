@@ -20,7 +20,8 @@ use Illuminate\Validation\Rules\Numeric;
 use Illuminate\Validation\Rules\Regex;
 use Illuminate\Validation\Rules\StringRule;
 use Illuminate\Validation\ValidationRuleParser;
-use Stringable;
+use ReflectionEnum;
+use ReflectionProperty;
 
 /** @internal */
 final class SchemaBuilder
@@ -37,6 +38,9 @@ final class SchemaBuilder
 
     /** Rules that check something else with parameters, like integer:strict or uuid:4. Those go to the server. */
     private const NO_PARAMS = ['Required', 'String', 'Numeric', 'Integer', 'Boolean', 'Uuid'];
+
+    /** What PCRE's \s matches with the u flag, written out for JavaScript, whose \s differs. */
+    private const UNICODE_SPACE = '\t-\r \x85\xA0\u1680\u180E\u2000-\u200A\u2028\u2029\u202F\u205F\u3000';
 
     /** How many parameters the size and digit rules need. Laravel throws an error with fewer. */
     private const NUMBER_PARAMS = [
@@ -111,9 +115,25 @@ final class SchemaBuilder
             $rule instanceof ArrayRule, $rule instanceof Date, $rule instanceof Numeric, $rule instanceof StringRule => explode('|', (string) $rule),
             $rule instanceof In, $rule instanceof NotIn, $rule instanceof Regex, $rule instanceof NotRegex,
             $rule instanceof Contains, $rule instanceof DoesntContain, $rule instanceof ArrayKeys, $rule instanceof IpAddress => [(string) $rule],
-            $rule instanceof Enum && $rule instanceof Stringable && (string) $rule !== 'in:' => ['enum:'.Str::after((string) $rule, 'in:')],
+            $rule instanceof Enum => $this->enumRule($rule),
             default => [$rule],
         };
+    }
+
+    /**
+     * Rule::enum() as an enum rule: first whether the enum is backed by integers or strings, which
+     * decides how tryFrom() reads the value, then the values it allows. A pure enum stays on the
+     * server, since Laravel can't read input into one.
+     *
+     * @return list<mixed>
+     */
+    private function enumRule(Enum $rule): array
+    {
+        $type = (new ReflectionProperty($rule, 'type'))->getValue($rule);
+        $backing = enum_exists($type) ? (new ReflectionEnum($type))->getBackingType()?->getName() : null;
+        $values = Str::after((string) $rule, 'in:');
+
+        return $backing === null || $values === '' ? [$rule] : ["enum:{$backing},{$values}"];
     }
 
     private function field(string $attribute, array $rules, MessageResolver $resolver): array
@@ -261,7 +281,8 @@ final class SchemaBuilder
     {
         $delimiter = $pattern[0] ?? '';
 
-        if ($delimiter === '' || ctype_alnum($delimiter) || $delimiter === '\\' || ctype_space($delimiter)) {
+        // A pattern this PHP can't compile fails on the server however JavaScript reads it.
+        if ($delimiter === '' || ctype_alnum($delimiter) || $delimiter === '\\' || ctype_space($delimiter) || ! $this->compiles($pattern)) {
             return null;
         }
 
@@ -283,10 +304,24 @@ final class SchemaBuilder
         return $body === null ? null : ['rule' => $rule, 'params' => [$body, $flags]];
     }
 
+    /** Whether this PHP compiles the pattern, without the warning a failure raises. */
+    private function compiles(string $pattern): bool
+    {
+        set_error_handler(fn () => true);
+
+        try {
+            return preg_match($pattern, '') !== false;
+        } finally {
+            restore_error_handler();
+        }
+    }
+
     /**
-     * The pattern for JavaScript's RegExp, or null when JavaScript would read it differently:
-     * POSIX classes, escapes only PCRE has (\K, \h, \x{...}), \p without the u flag, or a class
-     * that starts with ].
+     * The pattern for JavaScript's RegExp, or null when JavaScript could read it differently. With
+     * the u flag PCRE's \d and \s cover Unicode, so they are written out, while what its \w and \b
+     * and a caseless \p{...} match changed between PCRE releases. POSIX classes, a class that
+     * starts with ], escapes only PCRE has, and quantifiers like {,3} that PCRE releases read
+     * differently stay on the server too.
      */
     private function javascriptBody(string $body, string $flags): ?string
     {
@@ -294,23 +329,48 @@ final class SchemaBuilder
             return null;
         }
 
-        $supported = true;
+        $unicode = str_contains($flags, 'u');
+        $inClass = false;
+        $result = '';
 
-        $body = preg_replace_callback('/\\\\(x\{|.)/s', function (array $match) use ($flags, &$supported): string {
-            [$escape, $char] = $match;
+        for ($i = 0, $length = strlen($body); $i < $length; $i++) {
+            $char = $body[$i];
 
-            if (in_array($char, ['A', 'z', 'Z'], true) && ! str_contains($flags, 'm')) {
-                return $char === 'A' ? '^' : '$';
+            if ($char === '\\') {
+                $char = $body[++$i] ?? '';
+                $escape = match (true) {
+                    in_array($char, ['A', 'z', 'Z'], true) => $inClass || str_contains($flags, 'm') ? null : ($char === 'A' ? '^' : '$'),
+                    $char === 'd' || $char === 'D' => $unicode ? '\\'.($char === 'd' ? 'p' : 'P').'{Nd}' : '\\'.$char,
+                    $char === 's' => $unicode ? ($inClass ? self::UNICODE_SPACE : '['.self::UNICODE_SPACE.']') : '\s',
+                    $char === 'S' => $unicode ? ($inClass ? null : '[^'.self::UNICODE_SPACE.']') : '\S',
+                    in_array($char, ['w', 'W', 'b', 'B'], true) => $unicode && ! ($inClass && $char === 'b') ? null : '\\'.$char,
+                    // A property, as \p{L} or PCRE's short \pL.
+                    $char === 'p' || $char === 'P' => $unicode && ! str_contains($flags, 'i') && preg_match('/\G(?:\{([^}]+)\}|([A-Za-z]))/', $body, $property, 0, $i + 1)
+                        ? '\\'.$char.'{'.($property[1] !== '' ? $property[1] : $property[2]).'}'
+                        : null,
+                    $char === 'x' => preg_match('/\G[0-9a-fA-F]{2}/', $body, $hex, 0, $i + 1) ? '\x' : null,
+                    ctype_digit($char) => ctype_digit($body[$i + 1] ?? '') ? null : '\\'.$char,
+                    in_array($char, ['n', 'r', 't', 'f'], true) || ($char !== '' && ! ctype_alnum($char)) => '\\'.$char,
+                    default => null,
+                };
+
+                if ($escape === null) {
+                    return null;
+                }
+
+                $result .= $escape;
+                $i += $char === 'p' || $char === 'P' ? strlen($property[0]) : 0;
+            } elseif ($inClass) {
+                $inClass = $char !== ']';
+                $result .= $char;
+            } elseif ($char === '{' && ! preg_match('/\G\{\d+(,\d*)?\}/', $body, $quantifier, 0, $i)) {
+                return null;
+            } else {
+                $inClass = $char === '[';
+                $result .= $char;
             }
+        }
 
-            $same = ($char !== 'x{' && (! ctype_alnum($char) || str_contains('dDwWsSbBnrtfx0123456789', $char)))
-                || (in_array($char, ['p', 'P'], true) && str_contains($flags, 'u'));
-
-            $supported = $supported && $same;
-
-            return $escape;
-        }, $body);
-
-        return $supported ? $body : null;
+        return $result;
     }
 }

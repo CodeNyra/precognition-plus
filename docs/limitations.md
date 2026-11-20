@@ -19,15 +19,20 @@
   where releases disagree. These differences are still open, so a few values
   pass or fail in the browser and get another answer on submit:
   - `email` is checked more loosely than Laravel checks it;
-  - `Rule::enum()` also accepts a number written another way, like `01` for
-    `1`, for an enum backed by strings;
-  - `regex` patterns with `.` or `\s`, or with `\d`, `\w` or `\b` and the `u`
-    flag, can match differently in JavaScript, and so can `$` before a final
-    line break in a field that isn't trimmed;
   - the browser can't tell when PHP refuses an upload, for example one larger
     than `upload_max_filesize`;
   - when a form sends files, numbers and `true`/`false` reach Laravel as text,
-    and the browser still checks them as numbers and booleans.
+    and the browser still checks them as numbers and booleans;
+  - `alpha`, `alpha_dash`, `alpha_num`, `lowercase`, `uppercase` and Unicode
+    properties in `regex` depend on the Unicode tables of PHP and of the
+    browser, which can disagree about characters from recent Unicode versions;
+  - a `regex` pattern so slow that PHP gives up on it (`pcre.backtrack_limit`)
+    fails on the server, while the browser still answers it;
+  - when a server rule, like `unique`, comes before a browser rule that fails,
+    the browser shows the browser rule's message, while Laravel shows the
+    server rule's if that fails too;
+  - the browser assumes Laravel's default `TrimStrings` settings, so fields
+    added to its `except` list, or a `skipWhen()` callback, aren't followed.
 - Anything outside Precognition that watches precognitive responses (logging,
   monitoring) sees the first request of each form as a `200` with a JSON body
   instead of a `204`.

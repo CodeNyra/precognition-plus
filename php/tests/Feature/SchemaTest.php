@@ -3,6 +3,7 @@
 use CodeNyra\PrecognitionPlus\PrecognitionPlus;
 use CodeNyra\PrecognitionPlus\Schema\SchemaBuilder;
 use CodeNyra\PrecognitionPlus\Tests\Fixtures\Plan;
+use CodeNyra\PrecognitionPlus\Tests\Fixtures\Priority;
 use CodeNyra\PrecognitionPlus\Tests\Fixtures\StoreUserRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Regex;
@@ -76,6 +77,27 @@ it('converts PCRE patterns, and leaves untranslatable ones to the server', funct
 
     foreach (['extended', 'posix', 'spaces', 'bytes'] as $field) {
         expect($this->schema[$field])->toMatchArray(['rules' => [], 'server' => true]);
+    }
+});
+
+it('writes out what PCRE means by \d and \s with the u flag, and leaves what varies to the server', function () {
+    $patterns = [
+        'digits' => '/^\d+$/u',
+        'spaced' => '/^[\s\d]+$/u',
+        'short' => '/^\pL+$/u',
+        'word' => '/^\w+$/u',
+        'caseless' => '/^\p{Lu}$/iu',
+        'quantifier' => '/^a{,3}$/',
+        'lookbehind' => '/(?<=a+)b/',
+    ];
+    $schema = schemaFor(array_map(fn (string $pattern) => "regex:{$pattern}", $patterns));
+
+    expect($schema['digits']['rules'][0]['params'])->toBe(['^\p{Nd}+$', 'u'])
+        ->and($schema['spaced']['rules'][0]['params'][0])->toBe('^[\t-\r \x85\xA0\u1680\u180E\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\p{Nd}]+$')
+        ->and($schema['short']['rules'][0]['params'])->toBe(['^\p{L}+$', 'u']);
+
+    foreach (['word', 'caseless', 'quantifier', 'lookbehind'] as $field) {
+        expect($schema[$field])->toMatchArray(['rules' => [], 'server' => true]);
     }
 });
 
@@ -154,19 +176,23 @@ it('reads rule objects that stand for plain rules', function () {
     $schema = schemaFor([
         'role' => ['required', Rule::notIn(['root'])],
         'plan' => [Rule::enum(Plan::class)->except([Plan::Team])],
+        'priority' => [Rule::enum(Priority::class)],
         'age' => [Rule::numeric()->integer()->min(18)],
-        'name' => [Rule::string()->max(20)],
         'company' => [Rule::requiredIf(fn () => true)],
     ]);
 
     expect($schema['role']['server'])->toBeFalse()
         ->and($schema['role']['rules'][1])->toMatchArray(['rule' => 'not_in', 'params' => ['root']])
-        ->and($schema['plan']['rules'][0])->toBe(['rule' => 'enum', 'params' => ['free', 'pro'], 'message' => 'The selected plan is invalid.'])
+        ->and($schema['plan']['rules'][0])->toBe(['rule' => 'enum', 'params' => ['string', 'free', 'pro'], 'message' => 'The selected plan is invalid.'])
+        ->and($schema['priority']['rules'][0]['params'])->toBe(['int', '1', '2'])
         ->and(array_column($schema['age']['rules'], 'rule'))->toBe(['numeric', 'integer', 'min'])
         ->and($schema['age']['type'])->toBe('numeric')
-        ->and(array_column($schema['name']['rules'], 'rule'))->toBe(['string', 'max'])
         ->and($schema['company'])->toMatchArray(['rules' => [], 'server' => true]);
 });
+
+it('reads Rule::string()', function () {
+    expect(array_column(schemaFor(['name' => [Rule::string()->max(20)]])['name']['rules'], 'rule'))->toBe(['string', 'max']);
+})->skip(! method_exists(Rule::class, 'string'), 'Laravel 12.55 and later');
 
 it('reads the rule objects Laravel 13 added', function () {
     $schema = schemaFor([

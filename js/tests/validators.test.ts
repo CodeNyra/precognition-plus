@@ -103,11 +103,33 @@ describe('rules mirror Laravel', () => {
   })
 
   it('matches Rule::enum() values the way tryFrom() reads them', () => {
-    expect(passes('enum', 'pro', ['free', 'pro'])).toBe(true)
-    expect(passes('enum', 'team', ['free', 'pro'])).toBe(false)
-    expect(passes('enum', 2.5, ['1', '2'])).toBe(true)
-    expect(passes('enum', true, ['1', '2'])).toBe(true)
-    expect(passes('enum', ['1'], ['1'])).toBe(false)
+    // A string-backed enum needs the exact text, and reads a number or a boolean as an integer.
+    const strings = ['string', 'free', 'pro', '1']
+    expect(outcome('enum', 'pro', strings)).toBe('pass')
+    expect(outcome('enum', 'team', strings)).toBe('fail')
+    expect(outcome('enum', '01', strings)).toBe('fail')
+    expect(outcome('enum', 1.9, strings)).toBe('pass')
+    expect(outcome('enum', true, strings)).toBe('pass')
+    expect(outcome('enum', 2 ** 63, strings)).toBe('server')
+
+    // An int-backed enum reads numeric text as a number, cut to an integer within 64 bits.
+    const integers = ['int', '0', '1', '2']
+    expect(outcome('enum', '01', integers)).toBe('pass')
+    expect(outcome('enum', '1.9', integers)).toBe('pass')
+    expect(outcome('enum', '1abc', integers)).toBe('fail')
+    expect(outcome('enum', '9223372036854775808', integers)).toBe('fail')
+    expect(outcome('enum', false, integers)).toBe('pass')
+    expect(outcome('enum', ['1'], integers)).toBe('fail')
+  })
+
+  it('compares confirmations the way PHP compares with ===', () => {
+    const confirmed = (value: unknown, confirmation: unknown) =>
+      checkField({ x: field([['confirmed', ['x_confirmation']]]) }, validators, 'x', { x: value, x_confirmation: confirmation }).message === null
+    expect(confirmed(['a', 'b'], ['a', 'b'])).toBe(true)
+    expect(confirmed(['a', 'b'], ['b', 'a'])).toBe(false)
+    expect(confirmed(['a'], { 0: 'a' })).toBe(true)
+    expect(confirmed({ a: 1, b: 2 }, { b: 2, a: 1 })).toBe(false)
+    expect(confirmed(1, '1')).toBe(false)
   })
 
   it('checks how a value starts and ends', () => {
@@ -182,6 +204,18 @@ describe('rules mirror Laravel', () => {
     expect(passes('confirmed', 'secret', ['x_confirmation'], {}, { x_confirmation: 'other' })).toBe(false)
   })
 
+  it('asks the server about text PHP reads differently in a regex', () => {
+    // Without u PHP matches bytes, and with u and i its case folding isn't JavaScript's.
+    expect(outcome('regex', 'é', ['^.$', ''])).toBe('server')
+    expect(outcome('regex', 'é', ['^.$', 'u'])).toBe('pass')
+    expect(outcome('regex', 'É', ['^[a-zé]+$', 'iu'])).toBe('server')
+    expect(outcome('regex', '١٢', ['^\\p{Nd}+$', 'u'])).toBe('pass')
+    // \r isn't a line break to PHP, and its $ also matches before a final line break.
+    expect(outcome('regex', 'a\rb', ['^a.b$', ''])).toBe('server')
+    expect(outcome('regex', 'a\n', ['^a$', ''], {}, 'password')).toBe('server')
+    expect(outcome('regex', 'abc', ['^a.c$', ''])).toBe('pass')
+  })
+
   it('runs regexes converted from PCRE', () => {
     expect(passes('regex', 'ABC', ['^[a-z]+$', 'i'])).toBe(true)
     expect(passes('regex', 'AB1', ['^[a-z]+$', 'i'])).toBe(false)
@@ -201,17 +235,17 @@ describe('the engine', () => {
   })
 
   it('trims the invisible characters Laravel trims too', () => {
-    expect(passes('max', 'abc​', ['3'])).toBe(true)
-    expect(passes('max', ' abc\u0085﻿', ['3'])).toBe(true)
-    expect(passes('max', 'ㅤabc‍\u{E0020}', ['3'])).toBe(true)
-    expect(passes('max', 'ab‍c', ['3'])).toBe(false)
+    expect(passes('max', 'abc\u200B', ['3'])).toBe(true)
+    expect(passes('max', '\u00A0abc\u0085\uFEFF', ['3'])).toBe(true)
+    expect(passes('max', '\u3164abc\u200D\u{E0020}', ['3'])).toBe(true)
+    expect(passes('max', 'ab\u200Dc', ['3'])).toBe(false)
     expect(normalize(' secret ', 'password')).toBe(' secret ')
   })
 
   it('skips all but the implicit rules for text that PHP trims to nothing', () => {
     expect(outcome('min', '   ', ['8'], {}, 'password')).toBe('pass')
     expect(outcome('required', '   ', [], {}, 'password')).toBe('fail')
-    expect(outcome('min', ' ', ['8'], {}, 'password')).toBe('fail')
+    expect(outcome('min', '\u00A0', ['8'], {}, 'password')).toBe('fail')
   })
 
   it('asks the server about the whole field once a rule cannot be checked here', () => {

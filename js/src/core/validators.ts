@@ -75,6 +75,17 @@ const integer: RuleValidator = (value) => {
   return match !== null && BigInt(match[1]) >= -(2n ** 63n) && BigInt(match[1]) < 2n ** 63n
 }
 
+// How PHP's weak typing reads numeric text as an integer: whole numbers within 64 bits as they are,
+// anything else as a float cut to its whole part. Undefined where PHP throws a TypeError, for text
+// that isn't numeric or a number beyond 64 bits.
+function phpInt(text: string): string | undefined {
+  if (!isNumeric(text)) return undefined
+  const number = text.replace(/^[ \t\n\r\v\f]+|[ \t\n\r\v\f]+$/g, '')
+  if (/^[+-]?\d+$/.test(number) && BigInt(number) >= -(2n ** 63n) && BigInt(number) < 2n ** 63n) return BigInt(number).toString()
+  const float = Number(number)
+  return float >= -(2 ** 63) && float < 2 ** 63 ? BigInt(Math.trunc(float)).toString() : undefined
+}
+
 // Laravel's in rule. With the array rule, each item of a list must match an option's text exactly.
 // Any other value is compared loosely ('01' matches '1') up to Laravel 12.66 and 13.25 and exactly
 // after, so a value that only a loose comparison matches is left to the server.
@@ -88,6 +99,29 @@ function isIn(value: unknown, options: string[], context: RuleContext): boolean 
   const text = phpText(value) ?? askServer()
   if (options.includes(text)) return true
   return options.some((option) => phpStringEquals(text, option)) ? askServer() : false
+}
+
+// PHP's === on what JSON sends. Lists and objects arrive as PHP arrays, which are identical with the
+// same keys and identical values in the same order, and a missing value reads as null. A file is a
+// new object on the server, so the server answers.
+function identical(a: unknown, b: unknown): boolean {
+  if (isFile(a) || isFile(b)) return askServer()
+  const entries = (value: unknown) =>
+    Array.isArray(value) ? value.map((item, index) => [String(index), item] as const) : isPlainObject(value) ? Object.entries(value) : null
+  const x = entries(a)
+  const y = entries(b)
+  if (x === null || y === null) return x === y && (a ?? null) === (b ?? null)
+  return x.length === y.length && x.every(([key, item], index) => key === y[index][0] && identical(item, y[index][1]))
+}
+
+// A pattern the server converted for JavaScript, run only on text PHP reads the same way. PHP's $
+// also matches before a final line break, and \r, U+2028 and U+2029 aren't line breaks to it.
+// Without the u flag PHP matches bytes, and with u its caseless matching isn't JavaScript's, so
+// text beyond ASCII goes to the server in both cases.
+function pcreMatches(text: string, pattern: string, flags: string): boolean {
+  if (/\n$|[\r\u2028\u2029]/.test(text)) return askServer()
+  if ((!flags.includes('u') || flags.includes('i')) && /[^\x00-\x7F]/.test(text)) return askServer()
+  return new RegExp(pattern, flags).test(text)
 }
 
 // alpha only reads strings, alpha_dash and alpha_num numbers too.
@@ -164,25 +198,32 @@ export const validators: RuleValidators = {
   email: (value) => typeof value === 'string' && /^[^\s@]+@[^\s@]+$/.test(value),
   regex: (value, rule) => {
     const text = textOf(value)
-    return text !== undefined && new RegExp(rule.params[0], rule.params[1]).test(text)
+    return text !== undefined && pcreMatches(text, rule.params[0], rule.params[1])
   },
   not_regex: (value, rule) => {
     const text = textOf(value)
-    return text !== undefined && !new RegExp(rule.params[0], rule.params[1]).test(text)
+    return text !== undefined && !pcreMatches(text, rule.params[0], rule.params[1])
   },
   in: (value, rule, context) => isIn(value, rule.params, context),
   not_in: (value, rule, context) => !isIn(value, rule.params, context),
-  // Rule::enum(). tryFrom() turns numbers and booleans into integers first, and numeric strings
-  // too for an int-backed enum, so 2.5 matches the value 2.
+  // Rule::enum(), whose first parameter says how the enum is backed. tryFrom() reads the value with
+  // PHP's weak typing. Text must match a string-backed enum's value exactly, and an int-backed enum
+  // reads numeric text as a number. Booleans and numbers become integers for both, so 1.9 matches
+  // 1, and a number beyond 64 bits, which PHP writes its own way, goes to the server.
   enum: (value, rule) => {
-    if (value === null || Array.isArray(value) || isPlainObject(value)) return false
-    const number = typeof value === 'boolean' ? Number(value) : value
-    return (
-      rule.params.some((option) => phpStringEquals(phpText(value) ?? String(value), option)) ||
-      (isNumeric(number) && rule.params.includes(String(Math.trunc(Number(number)))))
-    )
+    const [backing, ...cases] = rule.params
+    if (typeof value === 'string') {
+      const key = backing === 'int' ? phpInt(value) : value
+      return key !== undefined && cases.includes(key)
+    }
+    if (typeof value === 'boolean') return cases.includes(value ? '1' : '0')
+    if (typeof value === 'number') {
+      const key = phpInt(String(value))
+      return key !== undefined ? cases.includes(key) : backing === 'int' ? false : askServer()
+    }
+    return isFile(value) && backing !== 'int' ? askServer() : false
   },
-  confirmed: (value, rule, context) => value === context.other(rule.params[0]),
+  confirmed: (value, rule, context) => identical(value, context.other(rule.params[0])),
   alpha: pattern(/^[\p{L}\p{M}]+$/u, /^[a-zA-Z]+$/, false),
   alpha_dash: pattern(/^[\p{L}\p{M}\p{N}_-]+$/u, /^[a-zA-Z0-9_-]+$/, true),
   alpha_num: pattern(/^[\p{L}\p{M}\p{N}]+$/u, /^[a-zA-Z0-9]+$/, true),

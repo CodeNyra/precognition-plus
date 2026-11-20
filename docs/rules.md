@@ -42,11 +42,11 @@ group them, and each is listed once.
 | `alpha`, `alpha_dash`, `alpha_num` | Browser | Also with `:ascii`. |
 | `ascii` | Server | Not in the browser yet. |
 | `base64` | Server | Laravel 13. Not in the browser yet. |
-| `confirmed` | Browser | Compares with `<field>_confirmation`, or the field named in `confirmed:<field>`. |
+| `confirmed` | Browser | Compares with `<field>_confirmation`, or the field named in `confirmed:<field>`, the way PHP's `===` compares, lists and objects included. |
 | `current_password` | Server | Needs the signed-in user. |
 | `different`, `same` | Server | Read another field. |
 | `email` | Browser | Plain `email` and `email:rfc`, checked leniently so the browser never rejects an address the server accepts. `dns`, `spoof`, `strict` and `filter` go to the server. |
-| `enum` | Browser | `Rule::enum()`. The enum's values are sent as a list. |
+| `enum` | Browser | `Rule::enum()`. The enum's values, and whether it is backed by integers or strings, are sent to the browser, which reads the value the way `tryFrom()` does. A pure enum goes to the server. |
 | `hex_color` | Server | Not in the browser yet. |
 | `in`, `not_in` | Browser | Also `Rule::in()` and `Rule::notIn()`. With the `array` rule, each item of a list is checked, as in Laravel. A value that only a loose comparison matches, like `01` for `1`, goes to the server, because Laravel compares loosely before 12.67 and 13.26 and exactly after. |
 | `ip`, `ipv4`, `ipv6` | Server | Not in the browser yet. |
@@ -156,10 +156,28 @@ Any other object goes to the server, and its parameters are never sent:
 ## Regular expressions
 
 `regex` and `not_regex` run in the browser with the flags `i`, `m`, `s` or
-`u`, when JavaScript reads the pattern the same way. `\A`, `\z` and `\Z` are
-converted. Syntax only PHP has, such as POSIX classes (`[[:digit:]]`), `\h`,
-`\K`, or `\p{...}` without the `u` flag, goes to the server, as do other
-flags.
+`u`, when the pattern means the same in JavaScript. The server first checks
+that its PHP can compile the pattern, then rewrites what needs it. `\A`, `\z`
+and `\Z` become `^` and `$`, and with the `u` flag PCRE's `\d` and `\s`, which
+cover Unicode, are written out.
+
+These patterns go to the server:
+
+- ones PHP can't compile, like `(?<=a+)b`;
+- POSIX classes like `[[:digit:]]`, and escapes only PCRE has, like `\h`, `\K`
+  or `\x{...}`;
+- `\w` and `\b` with the `u` flag, and `\p{...}` with the `i` flag, because
+  what they match changed between PCRE releases;
+- `\p{...}` without the `u` flag, and quantifiers like `{,3}`, which PCRE
+  releases read differently;
+- flags other than `i`, `m`, `s` and `u`.
+
+The browser also asks the server about text PHP reads differently: text
+beyond ASCII without the `u` flag, because PHP then matches bytes, or with
+both `u` and `i`, because PHP's case folding isn't JavaScript's; text with
+`\r`, U+2028 or U+2029, which aren't line breaks to PHP; and text that ends
+with a line break, before which PHP's `$` also matches. Only a field that
+`TrimStrings` leaves alone, like `password`, can end with a line break.
 
 ## Values
 
