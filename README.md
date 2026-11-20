@@ -1,6 +1,6 @@
 # Precognition Plus
 
-Precognition Plus checks the simple rules of your FormRequests in the browser, so a Laravel Precognition form only calls the server for the fields that need it. Rules like `required`, `integer`, `min`, `max` and `regex` run in the browser. A field with a rule the browser can't run, such as `unique`, `exists`, a Rule object or a closure, still goes to the server, on its own and only after its value changed.
+Precognition Plus checks the simple rules of your FormRequests in the browser, so a Laravel Precognition form only calls the server for the fields that need it. Rules like `required`, `integer`, `max`, `regex`, `alpha_dash` and `Rule::enum()` run in the browser. A field with a rule the browser can't run, such as `unique`, `exists`, a closure or a Rule class of your own, still goes to the server, on its own and only after its value changed.
 
 | | |
 |---|---|
@@ -36,13 +36,13 @@ A form never makes more requests than it would with plain Precognition.
 
 ## The browser can read the rules
 
-Anyone who passes the FormRequest's `authorize()` gets its browser rules, parameters included, so `in` lists and `regex` patterns are public. `Rule::in(Coupon::pluck('code'))` would show every coupon code to whoever opens the form. Check a list like that with `Rule::exists()`, a closure or a Rule object instead; those never leave the server.
+Anyone who passes the FormRequest's `authorize()` gets its browser rules, parameters included, so `in` and `not_in` lists, enum values and `regex` patterns are public. `Rule::in(Coupon::pluck('code'))` would show every coupon code to whoever opens the form. Check a list like that with `Rule::exists()`, a closure or a Rule class of your own instead; those never leave the server.
 
 ## Documentation
 
 - [Installation](docs/installation.md)
 - [Usage guide](docs/usage.md)
-- [Rules](docs/rules.md), which ones run in the browser
+- [Rules](docs/rules.md), every Laravel rule and where it runs
 - [How it works](docs/how-it-works.md)
 - [Limitations and troubleshooting](docs/limitations.md)
 

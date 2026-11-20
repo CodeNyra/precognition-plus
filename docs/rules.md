@@ -1,38 +1,10 @@
 # Rules
 
-## Checked in the browser
-
-| Rule | Notes |
-|---|---|
-| `required` | |
-| `string` | |
-| `numeric` | |
-| `integer` | Not `integer:strict`, which goes to the server. |
-| `boolean` | Not `boolean:strict`, which goes to the server. |
-| `min`, `max`, `between` | Measured like Laravel: characters for strings, the value for numeric fields (with `numeric` or `integer`), items for arrays, and kilobytes for files. |
-| `email` | Plain `email` and `email:rfc`. Lenient on purpose, so the browser never rejects an address the server accepts. Other variants (`dns`, `spoof`, `strict`, `filter`) go to the server. |
-| `regex` | With flags `i`, `m`, `s` or `u`, when JavaScript reads the pattern the same way. `\A`, `\z` and `\Z` are converted. Syntax only PHP has, such as POSIX classes (`[[:digit:]]`), `\h`, `\K`, or `\p{...}` without the `u` flag, goes to the server, as do other flags. |
-| `in` | Also `Rule::in([...])`. |
-| `confirmed` | Compares with `<field>_confirmation`, or the field named in `confirmed:<field>`. |
-
-These change how the others apply, and are understood too:
-
-| Modifier | |
-|---|---|
-| `nullable` | An empty field skips the other rules. |
-| `sometimes` | Accepted. A form's fields are always in its data, so it skips nothing there. |
-| `bail` | Accepted. The browser shows one message per field either way. |
-
-## Sent to the server
-
-Everything else, for example:
-
-- `unique`, `exists`, and any other rule that reads the database;
-- Rule objects (`new ValidCoupon`, `Rule::unique(...)`, `Password::defaults()`) and closures;
-- rules that look at other fields or files, like `required_if`, `same`, `different`, `after`, `image` and `mimes`;
-- `size`, `date`, `url`, `alpha_dash` and the other string and number rules not in the table above;
-- fields of arrays, written with `*` (`items.*.sku`);
-- fields that aren't in the FormRequest's rules at all.
+A rule runs in the browser when the field's own value is enough to check
+it. Rules that need the database, another field, the file's content or PHP's
+date parsing go to the server. Of the 112 rules in Laravel 13, 38 run in the
+browser, counting `nullable`, `sometimes` and `bail`, and so does
+`Rule::enum()`.
 
 A field can mix both kinds. Its browser rules are checked first, and the
 field is sent to the server only when they pass. See
@@ -40,12 +12,159 @@ field is sent to the server only when they pass. See
 When a server rule names another field, like `required_if:type,business`, the
 field is also sent again whenever that other field changes.
 
+Where the browser can't match Laravel exactly, it leans toward accepting. It
+never rejects a value the server would accept, and the submit still runs
+every rule on the server.
+
+## Every rule
+
+The rules are grouped the way the
+[Laravel docs](https://laravel.com/docs/validation#available-validation-rules)
+group them, and each is listed once.
+
+### Booleans
+
+| Rule | Runs in | Notes |
+|---|---|---|
+| `accepted` | Browser | Checked on an empty field too, like `required`. |
+| `accepted_if` | Server | Reads another field. |
+| `boolean` | Browser | `boolean:strict` goes to the server. |
+| `declined` | Browser | Checked on an empty field too. |
+| `declined_if` | Server | Reads another field. |
+
+### Strings
+
+| Rule | Runs in | Notes |
+|---|---|---|
+| `active_url` | Server | Looks the host up in DNS. |
+| `alpha`, `alpha_dash`, `alpha_num` | Browser | Also with `:ascii`. |
+| `ascii` | Server | Not in the browser yet. |
+| `base64` | Server | Laravel 13. Not in the browser yet. |
+| `confirmed` | Browser | Compares with `<field>_confirmation`, or the field named in `confirmed:<field>`. |
+| `current_password` | Server | Needs the signed-in user. |
+| `different`, `same` | Server | Read another field. |
+| `email` | Browser | Plain `email` and `email:rfc`, checked leniently so the browser never rejects an address the server accepts. `dns`, `spoof`, `strict` and `filter` go to the server. |
+| `enum` | Browser | `Rule::enum()`. The enum's values are sent as a list. |
+| `hex_color` | Server | Not in the browser yet. |
+| `in`, `not_in` | Browser | Also `Rule::in()` and `Rule::notIn()`. With the `array` rule, each item of a list is checked, as in Laravel. |
+| `ip`, `ipv4`, `ipv6` | Server | Not in the browser yet. |
+| `json` | Server | Not in the browser yet. |
+| `lowercase`, `uppercase` | Browser | |
+| `mac_address` | Server | Not in the browser yet. |
+| `min`, `max`, `size` | Browser | Measured like Laravel: characters for strings, the value for numeric fields (with `numeric`, `integer` or `decimal`), items for arrays, and kilobytes for files. |
+| `regex`, `not_regex` | Browser | When JavaScript reads the pattern the same way. See [Regular expressions](#regular-expressions). |
+| `starts_with`, `ends_with`, `doesnt_start_with`, `doesnt_end_with` | Browser | |
+| `string` | Browser | |
+| `ulid` | Browser | |
+| `url` | Server | Not in the browser yet. |
+| `uuid` | Browser | Without a version. `uuid:4` and the like go to the server. |
+
+### Numbers
+
+| Rule | Runs in | Notes |
+|---|---|---|
+| `between` | Browser | Measured like `min` and `max`. |
+| `decimal` | Browser | |
+| `digits`, `digits_between`, `min_digits`, `max_digits` | Browser | |
+| `gt`, `gte`, `lt`, `lte` | Server | Not in the browser yet. With a field name as their parameter, they read another field. |
+| `integer` | Browser | `integer:strict` goes to the server. |
+| `multiple_of` | Server | Not in the browser yet. |
+| `numeric` | Browser | `numeric:strict` goes to the server. |
+
+### Arrays
+
+| Rule | Runs in | Notes |
+|---|---|---|
+| `array` | Server | Not in the browser yet. The field's `min`, `max`, `size` and `in` still run in the browser first. |
+| `array_keys` | Server | Laravel 13. Not in the browser yet. |
+| `contains`, `doesnt_contain` | Server | Not in the browser yet. |
+| `distinct` | Server | Used on `*` fields, which the browser skips. |
+| `in_array` | Server | Reads another field. |
+| `in_array_keys` | Server | Not in the browser yet. |
+| `list` | Server | Not in the browser yet. |
+
+### Dates
+
+| Rule | Runs in | Notes |
+|---|---|---|
+| `after`, `after_or_equal`, `before`, `before_or_equal`, `date_equals` | Server | PHP reads dates in formats JavaScript doesn't, like `tomorrow` or `+1 week`, in the server's time zone. With a field name as their parameter, they read another field. |
+| `date`, `date_format` | Server | PHP's date parsing, as above. |
+| `timezone` | Server | Checked against PHP's list of time zones. |
+
+### Files
+
+| Rule | Runs in | Notes |
+|---|---|---|
+| `dimensions` | Server | Reads the image. |
+| `encoding` | Server | Reads the bytes of the file or string. |
+| `extensions` | Browser | The extension of the file's name, read the way Laravel reads it. As in Laravel, PHP files fail unless `php` is in the list. |
+| `file` | Browser | |
+| `image`, `mimes`, `mimetypes` | Server | Read the file's content. |
+
+### Database
+
+| Rule | Runs in | Notes |
+|---|---|---|
+| `exists`, `unique` | Server | Read the database. |
+
+### Utilities
+
+| Rule | Runs in | Notes |
+|---|---|---|
+| `any_of` | Server | `Rule::anyOf()`. |
+| `bail` | Browser | Accepted. The browser shows one message per field either way. |
+| `exclude` | Server | Not in the browser yet. |
+| `exclude_if`, `exclude_unless`, `exclude_with`, `exclude_without` | Server | Read another field. |
+| `filled`, `missing`, `present`, `prohibited` | Server | Not in the browser yet. |
+| `missing_if`, `missing_unless`, `missing_with`, `missing_with_all` | Server | Read another field. |
+| `nullable` | Browser | An empty field skips the other rules. |
+| `present_if`, `present_unless`, `present_with`, `present_with_all` | Server | Read another field. |
+| `prohibited_if`, `prohibited_if_accepted`, `prohibited_if_declined`, `prohibited_unless`, `prohibits` | Server | Read another field. |
+| `required` | Browser | |
+| `required_array_keys` | Server | Not in the browser yet. |
+| `required_if`, `required_if_accepted`, `required_if_declined`, `required_unless`, `required_with`, `required_with_all`, `required_without`, `required_without_all` | Server | Read another field. |
+| `sometimes` | Browser | Accepted. A form's fields are always in its data, so it skips nothing there. |
+
+Fields of arrays, written with `*` (`items.*.sku`), and fields that aren't in
+the FormRequest's rules at all always go to the server.
+
+## Rule objects
+
+Rule objects that stand for plain rules are read as those rules:
+
+| Object | Read as |
+|---|---|
+| `Rule::in()`, `Rule::notIn()` | `in`, `not_in` |
+| `Rule::enum()` | The enum's values, after `only()` and `except()` |
+| `Rule::string()`, `Rule::numeric()` | The rules they hold, so `Rule::string()->max(255)` is `string\|max:255` |
+| `Rule::regex()`, `Rule::notRegex()` | `regex`, `not_regex` (Laravel 13) |
+| `Rule::confirmed()`, `Rule::requiredWith()` and the other rule objects Laravel 13 added | The rule they name |
+| `Rule::array()`, `Rule::date()`, `Rule::ip()`, `Rule::contains()`, `Rule::doesntContain()`, `Rule::arrayKeys()` | Their rules, which go to the server |
+
+Any other object goes to the server, and its parameters are never sent:
+
+- closures and Rule classes of your own;
+- `Password`, `File` and `Rule::email()`, which run code of their own;
+- `Rule::exists()`, `Rule::unique()`, `Rule::can()`, `Rule::dimensions()` and
+  `Rule::anyOf()`;
+- `Rule::requiredIf()`, `Rule::prohibitedIf()`, `Rule::excludeIf()`, their
+  `Unless` versions and `Rule::when()`. They depend on a condition, and the
+  browser would keep the answer from the form's first request.
+
+## Regular expressions
+
+`regex` and `not_regex` run in the browser with the flags `i`, `m`, `s` or
+`u`, when JavaScript reads the pattern the same way. `\A`, `\z` and `\Z` are
+converted. Syntax only PHP has, such as POSIX classes (`[[:digit:]]`), `\h`,
+`\K`, or `\p{...}` without the `u` flag, goes to the server, as do other
+flags.
+
 ## Values
 
 Before checking, the browser treats values the way Laravel's default
 middleware does: strings are trimmed (`TrimStrings`) and empty strings become
-`null` (`ConvertEmptyStringsToNull`), so `required` and `nullable` behave
-the same on both sides.
+`null` (`ConvertEmptyStringsToNull`), inside arrays too, so `required` and
+`nullable` behave the same on both sides.
 
 ## Messages
 
@@ -59,8 +178,9 @@ value shown the way Laravel would show it, including names from
 
 ## What the browser sees
 
-The rules sent to the browser include their parameters, such as `in` lists,
-`regex` patterns and size limits, and anyone who passes the FormRequest's
-`authorize()` can read them. Server rules are never sent. To keep a list or a
-pattern private, check it with a server rule instead (see
+The rules sent to the browser include their parameters, such as `in` and
+`not_in` lists, enum values, `regex` patterns, `starts_with` prefixes and size
+limits, and anyone who passes the FormRequest's `authorize()` can read them.
+Server rules are never sent. To keep a list or a pattern private, check it
+with a server rule instead (see
 [Keeping a rule private](usage.md#keeping-a-rule-private)).

@@ -90,9 +90,9 @@ but should work unchanged. Follow the Precognition docs for each.
 ## Files
 
 Precognition only sends files when the form calls `validateFiles()`. With it,
-`min`, `max` and `between` on a file are checked in the browser in kilobytes,
-and rules like `image` and `mimes` go to the server, again each time another
-file is picked.
+`file`, `extensions`, and `min`, `max`, `between` and `size` in kilobytes are
+checked in the browser. Rules that read the file's content, like `image` and
+`mimes`, go to the server, again each time another file is picked.
 
 ## Getting the most out of it
 
@@ -105,10 +105,10 @@ or malformed address.
 
 ### Keep server-only fields few
 
-A field with only a Rule object or a closure goes to the server every time
-its value changes. Where part of the check can be written as browser rules,
-add them. `['required', 'string', 'min:8', 'max:8', new ValidCoupon]` stops
-codes of the wrong length in the browser.
+A field with only a closure or a Rule class of your own goes to the server
+every time its value changes. Where part of the check can be written as browser rules,
+add them. `['required', 'alpha_num', 'size:8', new ValidCoupon]` stops codes
+of the wrong length or with the wrong characters in the browser.
 
 ### Leave the messages to Laravel
 
@@ -156,15 +156,16 @@ from the form's first request, so it would go on checking the old ones:
 'company' => $this->input('type') === 'business' ? 'required|max:100' : 'nullable',
 ```
 
-A closure or a Rule object that reads another field has the same problem in
-a smaller way. Its field goes back to the server only when its own value
+A closure or a Rule class of your own that reads another field has the same
+problem in a smaller way. Its field goes back to the server only when its own value
 changes.
 
 ### Keeping a rule private
 
 Everything in a browser rule is visible to the user, including every value of
-an `in` list and every `regex` pattern. To keep something private, check it
-with a server rule instead. Server rules are never sent to the browser:
+an `in` or `not_in` list, every enum value and every `regex` pattern. To keep
+something private, check it with a server rule instead. Server rules are never
+sent to the browser:
 
 ```php
 'coupon' => ['required', Rule::in(Coupon::pluck('code'))],   // every code is sent to the browser

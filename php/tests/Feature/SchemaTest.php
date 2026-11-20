@@ -1,11 +1,20 @@
 <?php
 
 use CodeNyra\PrecognitionPlus\PrecognitionPlus;
+use CodeNyra\PrecognitionPlus\Schema\SchemaBuilder;
+use CodeNyra\PrecognitionPlus\Tests\Fixtures\Plan;
 use CodeNyra\PrecognitionPlus\Tests\Fixtures\StoreUserRequest;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Regex;
 
 beforeEach(function () {
     $this->schema = PrecognitionPlus::schema((new StoreUserRequest)->setContainer(app()));
 });
+
+function schemaFor(array $rules): array
+{
+    return (new SchemaBuilder(app('translator')))->build($rules);
+}
 
 it('keeps client-only fields entirely in the browser', function () {
     expect($this->schema['name'])->toBe([
@@ -81,3 +90,59 @@ it('names the other fields a server rule reads', function () {
 it('leaves array fields to the server', function () {
     expect($this->schema)->not->toHaveKey('items.*.sku');
 });
+
+it('sends the value-only rules to the browser', function () {
+    $schema = schemaFor([
+        'username' => 'required|alpha_dash:ascii|starts_with:a,b|size:8',
+        'slug' => 'not_regex:/^admin/i',
+        'pin' => 'digits:4',
+        'price' => 'decimal:2',
+        'terms' => 'accepted',
+        'avatar' => 'file|extensions:jpg,png',
+        'id' => 'uuid',
+        'versioned' => 'uuid:4',
+        'tags' => 'list|in:a,b',
+    ]);
+
+    expect(array_column($schema['username']['rules'], 'rule'))->toBe(['required', 'alpha_dash', 'starts_with', 'size'])
+        ->and($schema['username'])->toMatchArray(['server' => false, 'type' => 'string'])
+        ->and($schema['username']['rules'][3]['message'])->toBe('The username field must be 8 characters.')
+        ->and($schema['slug']['rules'][0])->toMatchArray(['rule' => 'not_regex', 'params' => ['^admin', 'i']])
+        ->and($schema['pin']['rules'][0])->toMatchArray(['rule' => 'digits', 'params' => ['4'], 'message' => 'The pin field must be 4 digits.'])
+        ->and($schema['price']['type'])->toBe('numeric')
+        ->and($schema['terms']['rules'][0]['rule'])->toBe('accepted')
+        ->and($schema['avatar'])->toMatchArray(['server' => false, 'type' => 'file'])
+        ->and($schema['id']['rules'][0]['rule'])->toBe('uuid')
+        ->and($schema['versioned'])->toMatchArray(['rules' => [], 'server' => true])
+        ->and($schema['tags'])->toMatchArray(['rules' => [], 'server' => true]);
+});
+
+it('reads rule objects that stand for plain rules', function () {
+    $schema = schemaFor([
+        'role' => ['required', Rule::notIn(['root'])],
+        'plan' => [Rule::enum(Plan::class)->except([Plan::Team])],
+        'age' => [Rule::numeric()->integer()->min(18)],
+        'name' => [Rule::string()->max(20)],
+        'company' => [Rule::requiredIf(fn () => true)],
+    ]);
+
+    expect($schema['role']['server'])->toBeFalse()
+        ->and($schema['role']['rules'][1])->toMatchArray(['rule' => 'not_in', 'params' => ['root']])
+        ->and($schema['plan']['rules'][0])->toBe(['rule' => 'enum', 'params' => ['free', 'pro'], 'message' => 'The selected plan is invalid.'])
+        ->and(array_column($schema['age']['rules'], 'rule'))->toBe(['numeric', 'integer', 'min'])
+        ->and($schema['age']['type'])->toBe('numeric')
+        ->and(array_column($schema['name']['rules'], 'rule'))->toBe(['string', 'max'])
+        ->and($schema['company'])->toMatchArray(['rules' => [], 'server' => true]);
+});
+
+it('reads the rule objects Laravel 13 added', function () {
+    $schema = schemaFor([
+        'code' => [Rule::regex('/^[A-Z]+$/')],
+        'password' => ['required', Rule::confirmed()],
+        'phone' => [Rule::requiredWith('email')],
+    ]);
+
+    expect($schema['code']['rules'][0])->toMatchArray(['rule' => 'regex', 'params' => ['^[A-Z]+$', '']])
+        ->and($schema['password']['rules'][1])->toMatchArray(['rule' => 'confirmed', 'params' => ['password_confirmation']])
+        ->and($schema['phone'])->toMatchArray(['server' => true, 'depends' => ['email']]);
+})->skip(! class_exists(Regex::class), 'Laravel 13 only');

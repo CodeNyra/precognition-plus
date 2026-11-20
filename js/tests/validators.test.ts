@@ -24,8 +24,91 @@ describe('rules mirror Laravel', () => {
     ['boolean', 'true', false],
     ['email', 'taylor@laravel.com', true],
     ['email', 'not an email', false],
+    ['accepted', 'yes', true],
+    ['accepted', 'true', true],
+    ['accepted', 'no', false],
+    ['declined', false, true],
+    ['declined', 'off', true],
+    ['declined', 'yes', false],
+    ['alpha', 'héllo', true],
+    ['alpha', 'abc1', false],
+    ['alpha_dash', 'a-b_1', true],
+    ['alpha_dash', 'a b', false],
+    ['alpha_num', 'abc123', true],
+    ['alpha_num', 'abc-1', false],
+    ['lowercase', 'abc', true],
+    ['lowercase', 'Abc', false],
+    ['uppercase', 'ABC', true],
+    ['uppercase', 'ß', false],
+    ['uuid', '123e4567-e89b-12d3-a456-426614174000', true],
+    ['uuid', '{123e4567-e89b-12d3-a456-426614174000}', false],
+    ['ulid', '01ARZ3NDEKTSV4RRFFQ69G5FAV', true],
+    ['ulid', '81ARZ3NDEKTSV4RRFFQ69G5FAV', false],
+    ['file', new File(['a'], 'a.txt'), true],
+    ['file', 'a.txt', false],
   ])('%s(%j) => %s', (rule, value, expected) => {
     expect(passes(rule, value)).toBe(expected)
+  })
+
+  it('runs accepted and declined on empty fields, like Laravel', () => {
+    expect(checkField({ x: field([['accepted']]) }, validators, 'x', {}).message).toBe('accepted failed')
+    expect(passes('declined', '', [], { nullable: true })).toBe(false)
+  })
+
+  it('counts size, digits and decimals the way Laravel does', () => {
+    expect(passes('size', 'abc', ['3'])).toBe(true)
+    expect(passes('size', '3', ['3'], { type: 'numeric' })).toBe(true)
+    expect(passes('size', ['a', 'b'], ['2'])).toBe(true)
+    expect(passes('digits', '0123', ['4'])).toBe(true)
+    expect(passes('digits', '-123', ['4'])).toBe(false)
+    expect(passes('digits_between', '12345', ['2', '4'])).toBe(false)
+    expect(passes('min_digits', 123, ['3'])).toBe(true)
+    expect(passes('decimal', '1.50', ['2'])).toBe(true)
+    expect(passes('decimal', '1.5', ['2'])).toBe(false)
+    expect(passes('decimal', '1.5', ['1', '3'])).toBe(true)
+  })
+
+  it('lets empty values through the digit counts and starts_with, as Laravel 12 does', () => {
+    expect(passes('max_digits', null, ['3'])).toBe(true)
+    expect(passes('doesnt_start_with', null, ['ab'])).toBe(true)
+    expect(passes('digits', null, ['3'])).toBe(false)
+  })
+
+  it('compares not_in exactly, and lists item by item only with the array rule', () => {
+    expect(passes('not_in', 'b', ['a', 'b'])).toBe(false)
+    expect(passes('not_in', '01', ['1'])).toBe(true)
+    expect(passes('in', ['a', 'b'], ['a', 'b'], { type: 'array' })).toBe(true)
+    expect(passes('in', ['a', 'c'], ['a', 'b'], { type: 'array' })).toBe(false)
+    expect(passes('in', ['a'], ['a'])).toBe(false)
+    expect(passes('not_in', ['a'], ['a'])).toBe(true)
+    expect(passes('not_in', [' a '], ['a'], { type: 'array' })).toBe(false)
+  })
+
+  it('matches Rule::enum() values the way tryFrom() reads them', () => {
+    expect(passes('enum', 'pro', ['free', 'pro'])).toBe(true)
+    expect(passes('enum', 'team', ['free', 'pro'])).toBe(false)
+    expect(passes('enum', 2.5, ['1', '2'])).toBe(true)
+    expect(passes('enum', true, ['1', '2'])).toBe(true)
+    expect(passes('enum', ['1'], ['1'])).toBe(false)
+  })
+
+  it('checks how a value starts and ends', () => {
+    expect(passes('starts_with', 'abc', ['x', 'ab'])).toBe(true)
+    expect(passes('ends_with', 'abc', ['b'])).toBe(false)
+    expect(passes('doesnt_start_with', 'admin1', ['admin'])).toBe(false)
+    expect(passes('doesnt_end_with', 123, ['4'])).toBe(true)
+    expect(passes('not_regex', 'Admin1', ['^admin', 'i'])).toBe(false)
+    expect(passes('alpha', 'héllo', ['ascii'])).toBe(false)
+  })
+
+  it('reads a file extension the way Laravel does', () => {
+    const file = (name: string) => new File(['a'], name)
+    expect(passes('extensions', file('photo.JPG'), ['jpg', 'png'])).toBe(true)
+    expect(passes('extensions', file('archive.tar.gz'), ['gz'])).toBe(true)
+    expect(passes('extensions', file('noext'), ['jpg'])).toBe(false)
+    expect(passes('extensions', file('shell.phtml'), ['phtml'])).toBe(false)
+    expect(passes('extensions', file('shell.phtml'), ['php', 'phtml'])).toBe(true)
+    expect(passes('extensions', 'photo.jpg', ['jpg'])).toBe(false)
   })
 
   it('measures size by type, like getSize()', () => {
@@ -62,6 +145,10 @@ describe('the engine', () => {
     expect(passes('min', '  ab  ', ['3'])).toBe(false)
   })
 
+  it('trims the strings inside arrays too', () => {
+    expect(passes('in', [' a '], ['a'], { type: 'array' })).toBe(true)
+  })
+
   it('skips non-implicit rules for a missing value', () => {
     expect(checkField({ x: field([['email']]) }, validators, 'x', {}).message).toBeNull()
   })
@@ -89,5 +176,9 @@ describe('the engine', () => {
 
     const invalidPattern = { x: field([['regex', ['(?<!', '']]]) }
     expect(checkField(invalidPattern, validators, 'x', { x: 'a' })).toEqual({ message: null, server: true })
+
+    // Laravel 12 reads a file's temporary path for starts_with and its kind.
+    const file = { x: field([['doesnt_start_with', ['a']]]) }
+    expect(checkField(file, validators, 'x', { x: new File(['a'], 'a.txt') })).toEqual({ message: null, server: true })
   })
 })

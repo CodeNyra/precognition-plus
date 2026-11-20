@@ -8,16 +8,18 @@
   `$request->isPrecognitive()` doesn't run until the form is submitted.
 - Server answers are reused. A server field is sent again only when its own
   value or a field its rules name (`type` in `required_if:type,business`)
-  changes. A closure or Rule object that reads another field
+  changes. A closure or a Rule class of your own that reads another field
   (`$this->country`, say) can show a stale result until its own field changes
   or the form is submitted.
 - Rules picked with PHP from other input (`$this->input('type') === ...`) are
   learned once, from the form's first request. Write them as Laravel rules
   such as `required_if` instead (see
   [the usage guide](usage.md#rules-that-depend-on-other-fields)).
-- The browser's `email` check is lenient on purpose and never blocks an
-  address the server accepts, so a few addresses pass in the browser and fail
-  on submit.
+- Where the browser can't match Laravel exactly, it is lenient on purpose and
+  never blocks a value the server accepts. `email` is checked loosely, `in`
+  also takes a number written another way (`01` for `1`), and where Laravel 12
+  and 13 disagree, the browser accepts what either one does. So a few values
+  pass in the browser and fail on submit.
 - Anything outside Precognition that watches precognitive responses (logging,
   monitoring) sees the first request of each form as a `200` with a JSON body
   instead of a `204`.
@@ -46,8 +48,8 @@ Look at the first precognitive request of the form on the Network tab:
 
 Check its rules against [the list](rules.md). Common reasons:
 
-- it has a rule the browser doesn't run, such as `unique`, a Rule object or a
-  closure, and its browser rules pass, so the server has to answer;
+- it has a rule the browser doesn't run, such as `unique`, a closure or a Rule
+  class of your own, and its browser rules pass, so the server has to answer;
 - it isn't in the FormRequest's rules at all, which is usually the case for
   `password_confirmation` (see [the usage guide](usage.md#password-confirmation));
 - it is an array field written with `*`;

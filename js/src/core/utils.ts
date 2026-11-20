@@ -39,7 +39,12 @@ export function phpStringEquals(a: string, b: string): boolean {
 
 const UNTRIMMED = new Set(['current_password', 'password', 'password_confirmation'])
 
+// TrimStrings and ConvertEmptyStringsToNull, which also clean the strings inside arrays.
 export function normalize(value: unknown, attribute: string): unknown {
+  if (Array.isArray(value)) return value.map((item, index) => normalize(item, `${attribute}.${index}`))
+  if (isPlainObject(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, normalize(item, `${attribute}.${key}`)]))
+  }
   if (typeof value !== 'string') return value
   const trimmed = UNTRIMMED.has(attribute) ? value : value.trim()
   return trimmed === '' ? null : trimmed

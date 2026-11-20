@@ -2,9 +2,9 @@
 
 The browser side of [Precognition Plus](https://github.com/codenyra/precognition-plus).
 It checks the simple rules of your Laravel FormRequests (`required`, `integer`,
-`min`, `max`, `regex` and a few more) in the browser, so a Precognition form
-only asks the server about fields with rules like `unique`, `exists`, Rule
-objects or closures.
+`max`, `regex`, `alpha_dash` and about 30 more) in the browser, so a
+Precognition form only asks the server about fields with rules like `unique`,
+`exists`, closures or Rule classes of your own.
 
 It works together with the Laravel package, `codenyra/precognition-plus` on
 Composer. Without it, forms work like plain Precognition.
@@ -27,7 +27,7 @@ Your forms stay as they are. The tests cover Inertia 3's `useForm` and
 should work too.
 
 Anyone who can submit a form can read its browser rules, including `in`
-lists and `regex` patterns. The
+lists, enum values and `regex` patterns. The
 [documentation](https://github.com/codenyra/precognition-plus/tree/main/docs)
 says which rules run where, and how to keep one on the server.
 

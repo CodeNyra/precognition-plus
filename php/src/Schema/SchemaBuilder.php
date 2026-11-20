@@ -3,22 +3,40 @@
 namespace CodeNyra\PrecognitionPlus\Schema;
 
 use Illuminate\Contracts\Translation\Translator;
+use Illuminate\Contracts\Validation\ParameterizedRule;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rules\ArrayKeys;
+use Illuminate\Validation\Rules\ArrayRule;
+use Illuminate\Validation\Rules\Contains;
+use Illuminate\Validation\Rules\Date;
+use Illuminate\Validation\Rules\DoesntContain;
+use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rules\In;
+use Illuminate\Validation\Rules\IpAddress;
+use Illuminate\Validation\Rules\NotIn;
+use Illuminate\Validation\Rules\NotRegex;
+use Illuminate\Validation\Rules\Numeric;
+use Illuminate\Validation\Rules\Regex;
+use Illuminate\Validation\Rules\StringRule;
 use Illuminate\Validation\ValidationRuleParser;
+use Stringable;
 
 /** @internal */
 final class SchemaBuilder
 {
     private const CLIENT_RULES = [
-        'Required', 'String', 'Numeric', 'Integer', 'Boolean', 'Min', 'Max', 'Between',
-        'Email', 'Regex', 'In', 'Confirmed',
+        'Required', 'String', 'Numeric', 'Integer', 'Boolean', 'Accepted', 'Declined',
+        'Min', 'Max', 'Between', 'Size', 'Digits', 'DigitsBetween', 'MinDigits', 'MaxDigits', 'Decimal',
+        'Email', 'Regex', 'NotRegex', 'In', 'NotIn', 'Enum', 'Confirmed',
+        'Alpha', 'AlphaDash', 'AlphaNum', 'Lowercase', 'Uppercase',
+        'StartsWith', 'EndsWith', 'DoesntStartWith', 'DoesntEndWith', 'Uuid', 'Ulid', 'File', 'Extensions',
     ];
 
     private const MODIFIERS = ['Nullable', 'Bail', 'Sometimes'];
 
-    private const NO_PARAMS = ['Required', 'String', 'Numeric', 'Integer', 'Boolean'];
+    /** Rules that check something else with parameters, like integer:strict or uuid:4. Those go to the server. */
+    private const NO_PARAMS = ['Required', 'String', 'Numeric', 'Integer', 'Boolean', 'Uuid'];
 
     /** Rules whose first parameter is another field, as in required_if:type,business. */
     private const FIRST_PARAMETER_IS_A_FIELD = [
@@ -67,10 +85,29 @@ final class SchemaBuilder
         $exploded = [];
 
         foreach (Arr::wrap($rules) as $rule) {
-            $exploded[] = $rule instanceof In ? (string) $rule : $rule;
+            array_push($exploded, ...$this->stringRules($rule));
         }
 
         return $exploded;
+    }
+
+    /**
+     * The string rules a rule object stands for, read the way Laravel's ValidationRuleParser reads
+     * them, and Rule::enum() as an enum rule with its values. Other objects stay as they are and go
+     * to the server. They run code of their own (closures, Password, your Rule classes), or their
+     * string depends on a condition (Rule::requiredIf()) that the browser would only learn once.
+     *
+     * @return list<mixed>
+     */
+    private function stringRules(mixed $rule): array
+    {
+        return match (true) {
+            $rule instanceof ArrayRule, $rule instanceof Date, $rule instanceof Numeric, $rule instanceof StringRule => explode('|', (string) $rule),
+            $rule instanceof In, $rule instanceof NotIn, $rule instanceof Regex, $rule instanceof NotRegex,
+            $rule instanceof Contains, $rule instanceof DoesntContain, $rule instanceof ArrayKeys, $rule instanceof IpAddress => [(string) $rule],
+            $rule instanceof Enum && $rule instanceof Stringable && (string) $rule !== 'in:' => ['enum:'.Str::after((string) $rule, 'in:')],
+            default => [$rule],
+        };
     }
 
     private function field(string $attribute, array $rules, MessageResolver $resolver): array
@@ -81,7 +118,8 @@ final class SchemaBuilder
         $parsed = [];
 
         foreach ($rules as $rule) {
-            if (! is_string($rule)) {
+            // Laravel 13's ParameterizedRule objects (Rule::confirmed(), Rule::requiredWith(...)) parse like strings.
+            if (! is_string($rule) && ! $rule instanceof ParameterizedRule) {
                 $server = true;
 
                 continue;
@@ -95,6 +133,7 @@ final class SchemaBuilder
         }
 
         $resolver->useRules($attribute, array_column($parsed, 2));
+        $names = array_column($parsed, 0);
         $client = [];
 
         foreach ($parsed as [$name, $parameters]) {
@@ -106,7 +145,7 @@ final class SchemaBuilder
                 continue;
             }
 
-            $clientRule = $this->clientRule($attribute, $name, $parameters);
+            $clientRule = $this->clientRule($attribute, $name, $parameters, $names);
 
             if ($clientRule === null) {
                 $server = true;
@@ -162,8 +201,11 @@ final class SchemaBuilder
         return [Str::before($field, '.*')];
     }
 
-    /** @return array{rule: string, params: list<string>}|null */
-    private function clientRule(string $attribute, string $name, array $parameters): ?array
+    /**
+     * @param  list<string>  $names  All the rules of the field.
+     * @return array{rule: string, params: list<string>}|null
+     */
+    private function clientRule(string $attribute, string $name, array $parameters, array $names): ?array
     {
         if (! in_array($name, self::CLIENT_RULES, true)) {
             return null;
@@ -174,14 +216,16 @@ final class SchemaBuilder
 
         return match (true) {
             in_array($name, self::NO_PARAMS, true) => $parameters === [] ? $rule : null,
+            // Laravel's in checks a list item by item only with the array rule, not with list.
+            in_array($name, ['In', 'NotIn'], true) && in_array('List', $names, true) && ! in_array('Array', $names, true) => null,
             $name === 'Email' => array_diff($parameters, ['rfc']) === [] ? $rule : null,
             $name === 'Confirmed' => ['rule' => 'confirmed', 'params' => [$parameters[0] ?? $attribute.'_confirmation']],
-            $name === 'Regex' => $this->regex($parameters[0] ?? ''),
+            $name === 'Regex', $name === 'NotRegex' => $this->regex($rule['rule'], $parameters[0] ?? ''),
             default => $rule,
         };
     }
 
-    private function regex(string $pattern): ?array
+    private function regex(string $rule, string $pattern): ?array
     {
         $delimiter = $pattern[0] ?? '';
 
@@ -204,7 +248,7 @@ final class SchemaBuilder
 
         $body = $this->javascriptBody(substr($pattern, 1, $end - 1), $flags);
 
-        return $body === null ? null : ['rule' => 'regex', 'params' => [$body, $flags]];
+        return $body === null ? null : ['rule' => $rule, 'params' => [$body, $flags]];
     }
 
     /**
