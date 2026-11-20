@@ -6,7 +6,7 @@ Precognition Plus checks the simple rules of your FormRequests in the browser, s
 |---|---|
 | Composer | `codenyra/precognition-plus` (namespace `CodeNyra\PrecognitionPlus\`) |
 | npm | `precognition-plus` |
-| Requires | PHP 8.2+, Laravel 12 or 13, `laravel-precognition` 2.x (Inertia 3's `@inertiajs/vue3`, `react` and `svelte` already include it) |
+| Requires | PHP 8.2+, Laravel 12.53+ or 13, `laravel-precognition` 2.x (Inertia 3's `@inertiajs/vue3`, `react` and `svelte` already include it) |
 
 You need both packages. With only one of them, forms work like plain Precognition.
 

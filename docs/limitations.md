@@ -17,8 +17,8 @@
   [the usage guide](usage.md#rules-that-depend-on-other-fields)).
 - Where the browser can't match Laravel exactly, it is lenient on purpose and
   never blocks a value the server accepts. `email` is checked loosely, `in`
-  also takes a number written another way (`01` for `1`), and where Laravel 12
-  and 13 disagree, the browser accepts what either one does. So a few values
+  also takes a number written another way (`01` for `1`), and where Laravel
+  releases disagree, the browser accepts what any of them does. So a few values
   pass in the browser and fail on submit.
 - Anything outside Precognition that watches precognitive responses (logging,
   monitoring) sees the first request of each form as a `200` with a JSON body

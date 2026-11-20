@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { checkField } from '../src/core/engine'
 import type { RuleValidators } from '../src/core/types'
+import { normalize } from '../src/core/utils'
 import { validators } from '../src/core/validators'
 import { field } from './fixtures'
 
@@ -147,6 +148,14 @@ describe('the engine', () => {
 
   it('trims the strings inside arrays too', () => {
     expect(passes('in', [' a '], ['a'], { type: 'array' })).toBe(true)
+  })
+
+  it('trims the invisible characters Laravel trims too', () => {
+    expect(passes('max', 'abc​', ['3'])).toBe(true)
+    expect(passes('max', ' abc\u0085﻿', ['3'])).toBe(true)
+    expect(passes('max', 'ㅤabc‍\u{E0020}', ['3'])).toBe(true)
+    expect(passes('max', 'ab‍c', ['3'])).toBe(false)
+    expect(normalize(' secret ', 'password')).toBe(' secret ')
   })
 
   it('skips non-implicit rules for a missing value', () => {

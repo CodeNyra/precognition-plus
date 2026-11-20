@@ -166,6 +166,10 @@ middleware does: strings are trimmed (`TrimStrings`) and empty strings become
 `null` (`ConvertEmptyStringsToNull`), inside arrays too, so `required` and
 `nullable` behave the same on both sides.
 
+It trims the same characters as Laravel's `Str::trim()`: whitespace, NUL, and
+the invisible characters in `Str::INVISIBLE_CHARACTERS`, such as the
+zero-width space, the byte order mark and the soft hyphen.
+
 ## Messages
 
 Every message is built on the server and sent with the rules, so the browser

@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | PHP | 8.2 or newer |
-| Laravel | 12 or 13 |
+| Laravel | 12.53 or newer, or 13 |
 | Front end | `laravel-precognition` 2.x. Inertia 3's `@inertiajs/vue3`, `@inertiajs/react` and `@inertiajs/svelte` include it. |
 
 Your app should already use Precognition: routes with the
