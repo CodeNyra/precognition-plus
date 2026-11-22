@@ -1,2 +1,3 @@
 export { setupPrecognitionPlus } from './core/interceptor'
-export type { ClientRule, FieldSchema, ValidationSchema } from './core/types'
+export { askServer } from './core/rule_helpers'
+export type { ClientRule, FieldSchema, RuleContext, RuleValidator, RuleValidators, ValidationSchema } from './core/types'

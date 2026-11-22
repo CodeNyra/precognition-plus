@@ -1,4 +1,5 @@
-import type { RuleValidators } from './core/types'
+import { askServer } from './core/rule_helpers'
+import type { RuleValidator, RuleValidators } from './core/types'
 import { accepted } from './rules/accepted'
 import { alpha } from './rules/alpha'
 import { alpha_dash } from './rules/alpha_dash'
@@ -70,4 +71,19 @@ export const browserRules: RuleValidators = {
   ulid,
   uppercase,
   uuid,
+}
+
+// The built-in checks with the app's own over them, from setupPrecognitionPlus({ rules }). An app's
+// check gets its own copy of the parameters, and an answer other than true or false leaves the
+// field to the server. Object.fromEntries keeps any name, even __proto__, a plain entry.
+export function withAppRules(rules: RuleValidators = {}): RuleValidators {
+  const wrapped = Object.entries(rules).map(([name, check]): [string, RuleValidator] => [
+    name,
+    (value, rule, context) => {
+      const passes: unknown = check(value, { ...rule, params: [...rule.params] }, context)
+      return typeof passes === 'boolean' ? passes : askServer()
+    },
+  ])
+
+  return Object.fromEntries([...Object.entries(browserRules), ...wrapped])
 }

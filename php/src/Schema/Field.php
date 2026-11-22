@@ -2,11 +2,7 @@
 
 namespace CodeNyra\PrecognitionPlus\Schema;
 
-/**
- * What a rule may look at besides its own parameters.
- *
- * @internal
- */
+/** What a rule may look at besides its own parameters. */
 final readonly class Field
 {
     public function __construct(

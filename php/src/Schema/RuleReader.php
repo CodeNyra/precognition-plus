@@ -4,7 +4,10 @@ namespace CodeNyra\PrecognitionPlus\Schema;
 
 use BackedEnum;
 use Illuminate\Contracts\Validation\CompilableRules;
+use Illuminate\Contracts\Validation\DataAwareRule;
+use Illuminate\Contracts\Validation\ImplicitRule;
 use Illuminate\Contracts\Validation\ParameterizedRule;
+use Illuminate\Contracts\Validation\ValidatorAwareRule;
 use Illuminate\Support\Arr;
 use Illuminate\Validation\ConditionalRules;
 use Illuminate\Validation\Rules\ArrayKeys;
@@ -34,9 +37,10 @@ final class RuleReader
      * server and whether any can make Laravel skip the rest, like exclude_if, Rule::when() or
      * Rule::forEach().
      *
+     * @param  list<string>  $classes  The rule classes the app lists in config, read by their class name.
      * @return array{list<array{string, list<mixed>, mixed}>, bool, bool}
      */
-    public static function read(mixed $rules): array
+    public static function read(mixed $rules, array $classes = []): array
     {
         $read = [];
         $server = false;
@@ -49,6 +53,13 @@ final class RuleReader
             // Only Laravel's own Rules\Enum goes to the browser, and only for a backed enum.
             if (is_object($rule) && $rule::class === Enum::class && ($parameters = self::enum($rule)) !== null) {
                 $read[] = ['Enum', $parameters, $rule];
+
+                continue;
+            }
+
+            // A rule class the app lists is read by its class name.
+            if (is_object($rule) && in_array($rule::class, $classes, true) && ! self::readsMore($rule)) {
+                $read[] = [$rule::class, [], $rule];
 
                 continue;
             }
@@ -98,6 +109,16 @@ final class RuleReader
             $rule instanceof Contains, $rule instanceof DoesntContain, $rule instanceof ArrayKeys, $rule instanceof IpAddress => [(string) $rule],
             default => [$rule],
         };
+    }
+
+    /**
+     * Whether Laravel runs the rule on empty fields, the way InvokableValidationRule::make() reads
+     * $implicit, or hands it the data or the validator. The browser can't follow those yet.
+     */
+    private static function readsMore(object $rule): bool
+    {
+        return $rule instanceof ImplicitRule || ($rule->implicit ?? false)
+            || $rule instanceof DataAwareRule || $rule instanceof ValidatorAwareRule;
     }
 
     /**

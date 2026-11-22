@@ -1,7 +1,7 @@
 import { client, type Config, type HttpResponse, HttpResponseError } from 'laravel-precognition'
-import { browserRules } from '../browser_rules'
+import { withAppRules } from '../browser_rules'
 import { checkField, hasQuery, received, schemaKey } from './engine'
-import type { ValidationSchema } from './types'
+import type { RuleValidators, ValidationSchema } from './types'
 import { findPath, hasFile, hasOwn, isPlainObject } from './utils'
 
 type Errors = Record<string, string[]>
@@ -13,7 +13,10 @@ const METHODS = ['get', 'post', 'put', 'patch', 'delete', 'query'] as const
 
 const HEADER = 'Precognition-Rules'
 
-export function setupPrecognitionPlus(): () => void {
+// rules holds the app's own browser checks by rule name, listed in config/precognition-plus.php on
+// the server. See docs/custom-rules.md.
+export function setupPrecognitionPlus(options: { rules?: RuleValidators } = {}): () => void {
+  const validators = withAppRules(options.rules)
   let schemas = new Map<string, ValidationSchema | null>()
   let cache = new Map<string, { value: string; errors: Errors }>()
   const inflight = new Map<string, AbortController>()
@@ -159,7 +162,7 @@ export function setupPrecognitionPlus(): () => void {
           continue
         }
 
-        const { message, server } = checkField(schema, browserRules, entry, data, sent)
+        const { message, server } = checkField(schema, validators, entry, data, sent)
 
         // An empty message still counts as a failure, like in Laravel.
         if (message !== null) {

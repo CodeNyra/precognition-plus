@@ -2,8 +2,12 @@
 
 namespace CodeNyra\PrecognitionPlus;
 
+use Illuminate\Support\Str;
+use InvalidArgumentException;
+
 /**
- * The rules the browser can check, kept in sync with js/src/browser_rules.ts. Anything else stays on the server.
+ * The rules the browser can check, kept in sync with js/src/browser_rules.ts. An app can add its own in
+ * config, and anything else stays on the server.
  *
  * @internal
  */
@@ -52,5 +56,34 @@ final class BrowserRules
         $class = self::RULES[$name] ?? null;
 
         return $class === null ? null : new $class;
+    }
+
+    /**
+     * The browser rule for a rule as RuleReader reads it. The app's own list comes first, by class
+     * for a rule class and by snake_case name otherwise, and null there keeps a built-in rule on
+     * the server.
+     *
+     * @param  array<string, class-string<BrowserRule>|null>  $app
+     */
+    public static function find(string $name, mixed $rule, array $app): ?BrowserRule
+    {
+        $class = is_object($rule) && $rule::class === $name;
+        $key = $class ? $name : Str::snake($name);
+
+        if (! array_key_exists($key, $app)) {
+            return $class ? null : self::named($name);
+        }
+
+        $browser = $app[$key];
+
+        if ($browser === null) {
+            return null;
+        }
+
+        if (! is_string($browser) || ! is_a($browser, BrowserRule::class, true)) {
+            throw new InvalidArgumentException("precognition-plus.rules.{$key} has to be a BrowserRule class or null.");
+        }
+
+        return $class ? new $browser($rule) : new $browser;
     }
 }

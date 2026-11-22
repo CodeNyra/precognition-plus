@@ -18,6 +18,9 @@ setupPrecognitionPlus()
 ```
 
 Every FormRequest on a precognitive route gets its browser rules, and
-`#[ServerOnly('field')]` keeps a field's rules on the server. The
+`#[ServerOnly('field')]` keeps a field's rules on the server. To check rules of
+your own in the browser too, pass their checks to `setupPrecognitionPlus({ rules })`,
+as [your own rules](https://github.com/codenyra/precognition-plus/blob/main/docs/custom-rules.md)
+shows. The
 [README](https://github.com/codenyra/precognition-plus#readme) covers the
 setup, the rules that run in the browser, and what the browser can see.

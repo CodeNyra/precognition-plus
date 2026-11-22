@@ -3,10 +3,12 @@
 namespace CodeNyra\PrecognitionPlus\Schema;
 
 use Closure;
+use CodeNyra\PrecognitionPlus\BrowserRule;
 use CodeNyra\PrecognitionPlus\BrowserRules;
 use Illuminate\Contracts\Translation\Translator;
 use Illuminate\Support\Str;
 use Illuminate\Translation\Translator as FileTranslator;
+use Illuminate\Validation\Factory;
 use Illuminate\Validation\Rules\Enum;
 use Stringable;
 
@@ -17,8 +19,17 @@ final class SchemaBuilder
 
     private const DATE_COMPARISONS = ['After', 'AfterOrEqual', 'Before', 'BeforeOrEqual', 'DateEquals'];
 
-    /** @param  list<string>  $changed  The rules the app registered a replacer or extension for, in snake_case. */
-    public function __construct(private readonly Translator $translator, private readonly array $changed = []) {}
+    /**
+     * @param  list<string>  $changed  The rules the app registered a replacer or extension for, in snake_case.
+     * @param  array<string, class-string<BrowserRule>|null>  $rules  The app's own browser rules, from config.
+     * @param  Factory|null  $factory  The app's validator factory, for its extensions' messages and replacers.
+     */
+    public function __construct(
+        private readonly Translator $translator,
+        private readonly array $changed = [],
+        private readonly array $rules = [],
+        private readonly ?Factory $factory = null,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $rules
@@ -53,8 +64,8 @@ final class SchemaBuilder
 
     private function fields(array $rules, array $messages, array $attributes): array
     {
-        $resolver = new MessageResolver($this->translator, $messages, $attributes);
-        $read = array_map(fn (mixed $fieldRules) => RuleReader::read($fieldRules), $rules);
+        $resolver = new MessageResolver($this->translator, $messages, $attributes, $this->factory);
+        $read = array_map(fn (mixed $fieldRules) => RuleReader::read($fieldRules, array_keys($this->rules)), $rules);
         $starred = [];
         $skipping = [];
 
@@ -112,7 +123,8 @@ final class SchemaBuilder
     /** @param  list<array{string, list<mixed>, mixed}>  $rules */
     private function field(string $attribute, array $rules, bool $server, bool $skips, MessageResolver $resolver): array
     {
-        $resolver->useRules($attribute, array_column($rules, 2));
+        // The app's rule classes play no part in the size type, and Laravel's parser can't read them.
+        $resolver->useRules($attribute, array_column(array_filter($rules, fn (array $read) => ! self::isClass($read[0], $read[2])), 2));
         $field = new Field($attribute, $resolver->sizeType($attribute));
         $nullable = false;
         $sometimes = false;
@@ -136,24 +148,16 @@ final class SchemaBuilder
                 continue;
             }
 
-            // Leave it to the server when Laravel may skip the rules, a parameter isn't a string
-            // (compared strictly since 12.67 and 13.26), or the app registered a replacer or extension.
-            $strings = array_filter($parameters, 'is_string') === $parameters;
-            $changed = in_array(Str::snake($rule instanceof Enum ? $rule::class : $name), $this->changed, true);
-            $params = $skips || ! $strings || $changed ? null : BrowserRules::named($name)?->parameters($parameters, $field);
+            // Leave it to the server when Laravel may skip the rules.
+            $entry = $skips ? null : $this->browserEntry($attribute, $name, $parameters, $rule, $field, $resolver);
 
-            // Only build messages for browser rules, since a replacer can fail on others, like min without a parameter.
-            $message = $params === null ? null : ($rule instanceof Enum
-                ? $resolver->enumMessageFor($attribute, $rule)
-                : $resolver->messageFor($attribute, $name, $parameters));
-
-            if ($message === null) {
+            if ($entry === null) {
                 $server = true;
 
                 continue;
             }
 
-            $client[] = ['rule' => Str::snake($name), 'params' => $params, 'message' => $message];
+            $client[] = $entry;
         }
 
         $schema = ['rules' => $client, 'server' => $server, 'nullable' => $nullable, 'type' => $field->type];
@@ -167,6 +171,61 @@ final class SchemaBuilder
         }
 
         return $schema;
+    }
+
+    /**
+     * The rule as the browser gets it, or null when it stays on the server.
+     *
+     * @param  list<mixed>  $parameters
+     * @return array{rule: string, params: list<string>, message: string}|null
+     */
+    private function browserEntry(string $attribute, string $name, array $parameters, mixed $rule, Field $field, MessageResolver $resolver): ?array
+    {
+        $class = self::isClass($name, $rule);
+        $listed = array_key_exists($class ? $name : Str::snake($name), $this->rules);
+
+        // Leave it to the server when a parameter isn't a string (compared strictly since 12.67 and
+        // 13.26), or the app registered a replacer or extension, unless it also lists the rule and
+        // so gives its browser half.
+        if (array_filter($parameters, 'is_string') !== $parameters
+            || (! $listed && in_array(Str::snake($rule instanceof Enum ? $rule::class : $name), $this->changed, true))) {
+            return null;
+        }
+
+        // The browser can't run a listed rule Laravel runs on empty fields, apart from the built-in
+        // ones, or an extension that reads other fields.
+        if ($listed && ! $class && BrowserRules::named($name) === null
+            && ($resolver->runsOnEmpty($name) || $resolver->readsOtherFields($name))) {
+            return null;
+        }
+
+        $browser = BrowserRules::find($name, $rule, $this->rules);
+        $params = $browser?->parameters($parameters, $field);
+
+        if ($params === null || ! array_is_list($params) || array_filter($params, 'is_string') !== $params) {
+            return null;
+        }
+
+        // Only build messages for browser rules, since a replacer can fail on others, like min without
+        // a parameter. A rule class names its check and gives its message in its browser rule, since
+        // Laravel only learns the message from $fail().
+        if ($class) {
+            [$browserName, $text] = [$browser->name(), $browser->message()];
+            $message = $browserName === null || $text === null ? null : $resolver->objectMessageFor($attribute, $rule, [$text]);
+        } else {
+            $browserName = Str::snake($name);
+            $message = $rule instanceof Enum
+                ? $resolver->enumMessageFor($attribute, $rule)
+                : $resolver->messageFor($attribute, $name, $parameters);
+        }
+
+        return $message === null ? null : ['rule' => $browserName, 'params' => $params, 'message' => $message];
+    }
+
+    /** Whether RuleReader read this as one of the app's rule classes, which it names by class. */
+    private static function isClass(string $name, mixed $rule): bool
+    {
+        return is_object($rule) && $rule::class === $name;
     }
 
     private static function isText(array $parameters): bool

@@ -1,9 +1,9 @@
 # Rules
 
-These rules run in the browser. Every other rule, like `unique`, `exists`,
-`date`, `array`, a closure or a Rule class of your own, runs on the server. A
-field with both kinds is checked in the browser first, and only sent to the
-server once its browser rules pass.
+These rules run in the browser, and [you can add your own](custom-rules.md).
+Every other rule, like `unique`, `exists`, `date`, `array` or a closure, runs
+on the server. A field with both kinds is checked in the browser first, and
+only sent to the server once its browser rules pass.
 
 | Rule | Notes |
 |---|---|

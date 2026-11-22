@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { browserRules } from '../src/browser_rules'
+import { askServer, type RuleValidator } from '../src'
+import { browserRules, withAppRules } from '../src/browser_rules'
 import { checkField, received, schemaKey } from '../src/core/engine'
 import type { RuleValidators } from '../src/core/types'
 import { normalize } from '../src/core/utils'
@@ -436,4 +437,71 @@ describe('the engine', () => {
     expect(received({ name: 'Taylor' })).not.toBeNull()
   })
 
+})
+
+describe("the app's own rules", () => {
+  const answer = (validators: RuleValidators, rule: string, value: unknown, params: string[] = []) => {
+    const result = checkField({ x: field([[rule, params]]) }, validators, 'x', { x: value })
+    return result.message !== null ? 'fail' : result.server ? 'server' : 'pass'
+  }
+
+  it('runs a check next to the built-in ones, with the value as PHP gets it', () => {
+    const seen: unknown[] = []
+    const iso_date: RuleValidator = (value, rule, context) => {
+      seen.push([value, rule.params, context.field.type])
+      return value === '2024-02-29'
+    }
+    const validators = withAppRules({ iso_date })
+
+    expect(answer(validators, 'iso_date', ' 2024-02-29 ', ['1900'])).toBe('pass')
+    expect(answer(validators, 'iso_date', '2024-02-30')).toBe('fail')
+    expect(seen[0]).toEqual(['2024-02-29', ['1900'], 'string'])
+    expect(answer(validators, 'max', 'abcd', ['3'])).toBe('fail')
+  })
+
+  it('leaves the field to the server unless the check answers true or false', () => {
+    const unsure: RuleValidators = {
+      asks: () => askServer(),
+      throws: () => {
+        throw new Error('Not sure.')
+      },
+      nothing: () => undefined as unknown as boolean,
+      truthy: () => 'yes' as unknown as boolean,
+    }
+    const validators = withAppRules(unsure)
+
+    for (const name of Object.keys(unsure)) expect(answer(validators, name, 'a'), name).toBe('server')
+  })
+
+  it('replaces a built-in check with one of the same name, and leaves the built-in list alone', () => {
+    const validators = withAppRules({ email: (value) => value === 'me' })
+
+    expect(answer(validators, 'email', 'me')).toBe('pass')
+    expect(answer(validators, 'email', 'me@example.com')).toBe('fail')
+    expect(answer(browserRules, 'email', 'me@example.com')).toBe('pass')
+  })
+
+  it('gives each check its own copy of the params, so the cached rules stay as they came', () => {
+    const schema = { x: field([['tag', ['a']]]) }
+    const validators = withAppRules({
+      tag: (_value, rule) => {
+        rule.params.push('b')
+        return true
+      },
+    })
+
+    checkField(schema, validators, 'x', { x: 'v' })
+    expect(schema.x.rules[0].params).toEqual(['a'])
+  })
+
+  it('keeps any name a plain entry, even __proto__', () => {
+    const validators = withAppRules(Object.fromEntries([['__proto__', () => false]]))
+
+    expect(Object.getPrototypeOf(validators)).toBe(Object.prototype)
+    expect(answer(validators, '__proto__', 'a')).toBe('fail')
+  })
+
+  it('sends a rule the browser has no check for to the server', () => {
+    expect(answer(withAppRules(), 'iso_date', '2024-02-29')).toBe('server')
+  })
 })

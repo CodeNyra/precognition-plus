@@ -162,7 +162,8 @@ class PrecognitionPlus
                 app('validator'),
                 Factory::class,
             )();
-            $schema = (new SchemaBuilder(app('translator'), $changed))->build($rules, $messages, $attributes);
+            $builder = new SchemaBuilder(app('translator'), $changed, config('precognition-plus.rules', []), app('validator'));
+            $schema = $builder->build($rules, $messages, $attributes);
             $private = static::serverOnly($form);
 
             foreach ($schema as $attribute => $field) {

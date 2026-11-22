@@ -3,7 +3,7 @@ import { Form, useForm } from '@inertiajs/vue3'
 import { client } from 'laravel-precognition'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick } from 'vue'
-import { setupPrecognitionPlus } from '../src'
+import { type RuleValidator, setupPrecognitionPlus } from '../src'
 import { field, schema } from './fixtures'
 import { fakeServer, navigate } from './setup'
 
@@ -575,5 +575,40 @@ describe('other entry points', () => {
     await vi.waitFor(() => expect(slot.errors).toEqual({ name: 'max failed' }))
 
     expect(server.requests).toHaveLength(1)
+  })
+})
+
+describe("the app's own rules", () => {
+  // The browser half of iso_date, from docs/custom-rules.md.
+  const iso_date: RuleValidator = (value) => {
+    const date = typeof value === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(value) : null
+    if (!date) return false
+    const [year, month, day] = date.slice(1).map(Number)
+    const parsed = new Date(0)
+    parsed.setUTCFullYear(year, month - 1, day)
+    return year >= 1 && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day
+  }
+
+  beforeEach(() => {
+    uninstall()
+    server = fakeServer({ 'post /people': { birthday: field([['required'], ['iso_date']]) } })
+    uninstall = setupPrecognitionPlus({ rules: { iso_date } })
+  })
+
+  it('checks a rule from setupPrecognitionPlus({ rules }) in the browser, with the message the server sent', async () => {
+    const form = useForm('post', '/people', { birthday: '' }).setValidationTimeout(1)
+    form.birthday = '2024-02-29'
+    form.validate('birthday')
+    await vi.waitFor(() => expect(form.valid('birthday')).toBe(true))
+
+    form.birthday = '2024-02-30'
+    form.validate('birthday')
+    await vi.waitFor(() => expect(form.errors).toEqual({ birthday: 'iso_date failed' }))
+
+    form.birthday = '2028-02-29'
+    form.validate('birthday')
+    await vi.waitFor(() => expect(form.valid('birthday')).toBe(true))
+
+    expect(server.requests).toEqual([{ method: 'post', url: '/people', only: 'birthday', rules: true }])
   })
 })

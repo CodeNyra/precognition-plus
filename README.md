@@ -60,7 +60,7 @@ Rules the browser doesn't run, like `Rule::exists()` or a closure, never leave t
 
 Set `PRECOGNITION_PLUS_ENABLED=false` in `.env` to turn it off.
 
-[The rules](docs/rules.md) list what runs in the browser, and [the limitations](docs/limitations.md) cover what doesn't, plus troubleshooting. The [live demo](https://precognition.codenyra.com) shows each kind of field, and [`demo/`](demo) runs it locally.
+[The rules](docs/rules.md) list what runs in the browser, and [the limitations](docs/limitations.md) cover what doesn't, plus troubleshooting. [Your own rules](docs/custom-rules.md) shows how to add more, from Laravel's other rules to rule classes you write. The [live demo](https://precognition.codenyra.com) shows each kind of field, and [`demo/`](demo) runs it locally.
 
 ## Development
 
