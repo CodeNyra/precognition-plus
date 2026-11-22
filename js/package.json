@@ -1,6 +1,6 @@
 {
   "name": "precognition-plus",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Checks common Laravel FormRequest rules in the browser for Precognition forms, and only asks the server for rules that need it.",
   "license": "MIT",
   "author": "CodeNyra",
