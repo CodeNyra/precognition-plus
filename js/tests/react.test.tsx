@@ -36,7 +36,7 @@ function renderForm() {
 }
 
 describe('stock Inertia React useForm()', () => {
-  it('asks for the rules first, then validates client-only fields in the browser', async () => {
+  it('fetches the rules first, then checks browser-only fields locally', async () => {
     const current = renderForm()
     act(() => current.form.setData('name', 'Taylor'))
     act(() => {
@@ -53,7 +53,7 @@ describe('stock Inertia React useForm()', () => {
     expect(server.requests).toEqual([{ method: 'post', url: '/users', only: 'name', rules: true }])
   })
 
-  it('sends server fields as a precognitive request for that field only', async () => {
+  it('sends a server field in a precognitive request of its own', async () => {
     const current = renderForm()
     act(() => current.form.setData('name', 'Taylor'))
     act(() => {

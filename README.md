@@ -1,21 +1,23 @@
 # Precognition Plus
 
-Precognition Plus checks the simple rules of your FormRequests in the browser, so a Laravel Precognition form only calls the server for the fields that need it. Rules like `required`, `integer`, `max`, `regex`, `alpha_dash` and `Rule::enum()` run in the browser. A field with a rule the browser can't run, such as `unique`, `exists`, a closure or a Rule class of your own, still goes to the server, on its own and only after its value changed.
+Precognition Plus runs the simple rules of your FormRequests in the browser, so a Laravel Precognition form only asks the server about the fields that need it. Rules like `required`, `max`, `email`, `in` and `regex` are checked in the browser, while `unique`, `exists`, closures and the like still run on the server.
 
 | | |
 |---|---|
-| Composer | `codenyra/precognition-plus` (namespace `CodeNyra\PrecognitionPlus\`) |
+| Composer | `codenyra/precognition-plus` |
 | npm | `precognition-plus` |
-| Requires | PHP 8.2+, Laravel 12.53+ or 13, `laravel-precognition` 2.x (Inertia 3's `@inertiajs/vue3`, `react` and `svelte` already include it) |
-
-You need both packages. With only one of them, forms work like plain Precognition.
+| Requires | PHP 8.2+, Laravel 12.53+ or 13, and `laravel-precognition` 2.1+ (Inertia 3 ships with it) |
 
 ## Setup
+
+Your app should already be using [Laravel Precognition](https://laravel.com/docs/precognition). Install both packages.
 
 ```bash
 composer require codenyra/precognition-plus
 npm install precognition-plus
 ```
+
+Then call `setupPrecognitionPlus()` once, before your app starts.
 
 ```ts
 // resources/js/app.ts
@@ -24,41 +26,45 @@ import { setupPrecognitionPlus } from 'precognition-plus'
 setupPrecognitionPlus()
 ```
 
-FormRequests, controllers, components and the `HandlePrecognitiveRequests` middleware on your routes stay the way the Precognition docs describe them.
+From then on, every FormRequest on a route with `HandlePrecognitiveRequests` gets browser rules. Your FormRequests, controllers and forms don't change.
 
-## How it works, in short
+## How it works
 
-1. The first validation of a form goes to the server as usual. Its response also brings back the FormRequest's browser rules, with Laravel's own messages.
-2. After that, browser rules are checked in the browser. Fields with server rules are sent on their own, and only when their value, or a field their rules name, changed.
-3. Submitting the form runs full validation on the server, as before.
+1. A form's first validation request goes to the server as usual, and the response also carries the FormRequest's browser rules, with Laravel's own messages.
+2. After that, browser rules run in the browser. A field with a server rule is sent on its own once its browser rules pass, and only if its value, or a field its rules read, has changed.
+3. Submitting still runs every rule on the server, as before.
 
-A form never makes more requests than it would with plain Precognition.
+## Keeping rules private
 
-## The browser can read the rules
+Anyone who gets past a form's `authorize()` can see its browser rules, parameters included, like `in` lists, enum values and patterns. To keep a field's rules on the server, name it in `#[ServerOnly]` on the FormRequest, a parent class or a trait. The field is still validated, just only on the server, and so are the fields nested under it, like `coupon.code`. A `*` matches any key, so `#[ServerOnly('*')]` keeps all of a form's rules on the server.
 
-Anyone who passes the FormRequest's `authorize()` gets its browser rules, parameters included, so `in` and `not_in` lists, enum values and `regex` patterns are public. `Rule::in(Coupon::pluck('code'))` would show every coupon code to whoever opens the form. Check a list like that with `Rule::exists()`, a closure or a Rule class of your own instead; those never leave the server.
+```php
+use CodeNyra\PrecognitionPlus\ServerOnly;
 
-## Documentation
+#[ServerOnly('coupon')]
+class CheckoutRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'coupon' => ['nullable', Rule::in(Coupon::pluck('code'))], // checked on the server
+            'plan' => ['required', Rule::in(['free', 'pro'])],         // checked in the browser
+        ];
+    }
+}
+```
 
-- [Installation](docs/installation.md)
-- [Usage guide](docs/usage.md)
-- [Rules](docs/rules.md), every Laravel rule and where it runs
-- [How it works](docs/how-it-works.md)
-- [Limitations and troubleshooting](docs/limitations.md)
+Rules the browser doesn't run, like `Rule::exists()` or a closure, never leave the server anyway.
 
-The [live demo](https://precognition.codenyra.com) is a signup form with browser, mixed and server-only fields, and a log of every check. To run it yourself, see [`demo/`](demo).
+## More
+
+Set `PRECOGNITION_PLUS_ENABLED=false` in `.env` to turn it off.
+
+[The rules](docs/rules.md) list what runs in the browser, and [the limitations](docs/limitations.md) cover what doesn't, plus troubleshooting. The [live demo](https://precognition.codenyra.com) shows each kind of field, and [`demo/`](demo) runs it locally.
 
 ## Development
 
 ```bash
-composer install && composer test                           # PHP: schema building, precognitive responses
-cd js && npm install && npm test                            # JS: rules, interceptor with stock Inertia Vue/React forms
-npm run typecheck && npm run build
+composer install && composer test
+cd js && npm install && npm test && npm run typecheck && npm run build
 ```
-
-| Folder | What |
-|---|---|
-| `php/` | The Composer package (`src/`, `config/`) and its tests. `composer.json` stays at the root, where Packagist reads it. |
-| `js/` | The npm package, with its own `package.json` and tests. |
-| `docs/` | The documentation. |
-| `demo/` | The demo's files, and `setup.sh`, which builds a fresh Laravel app with them. |

@@ -1,82 +1,63 @@
 # Limitations and troubleshooting
 
-## Known limitations
+## Limitations
 
-- The first validation of each form waits for the server, as with plain
-  Precognition, because that request brings the rules.
-- For fields checked only in the browser, code that branches on
-  `$request->isPrecognitive()` doesn't run until the form is submitted.
-- Server answers are reused. A server field is sent again only when its own
-  value or a field its rules name (`type` in `required_if:type,business`)
-  changes. A closure or a Rule class of your own that reads another field
-  (`$this->country`, say) can show a stale result until its own field changes
-  or the form is submitted.
-- Rules picked with PHP from other input (`$this->input('type') === ...`) are
-  learned once, from the form's first request. Write them as Laravel rules
-  such as `required_if` instead (see
-  [the usage guide](usage.md#rules-that-depend-on-other-fields)).
-- The browser answers the way Laravel does, or leaves the field to the server
-  where releases disagree. These differences are still open, so a few values
-  pass or fail in the browser and get another answer on submit:
-  - `email` is checked more loosely than Laravel checks it;
-  - the browser can't tell when PHP refuses an upload, for example one larger
-    than `upload_max_filesize`;
-  - when a form sends files, numbers and `true`/`false` reach Laravel as text,
-    and the browser still checks them as numbers and booleans;
-  - `alpha`, `alpha_dash`, `alpha_num`, `lowercase`, `uppercase` and Unicode
-    properties in `regex` depend on the Unicode tables of PHP and of the
-    browser, which can disagree about characters from recent Unicode versions;
-  - a `regex` pattern so slow that PHP gives up on it (`pcre.backtrack_limit`)
-    fails on the server, while the browser still answers it;
-  - when a server rule, like `unique`, comes before a browser rule that fails,
-    the browser shows the browser rule's message, while Laravel shows the
-    server rule's if that fails too;
-  - the browser assumes Laravel's default `TrimStrings` settings, so fields
-    added to its `except` list, or a `skipWhen()` callback, aren't followed.
-- Anything outside Precognition that watches precognitive responses (logging,
-  monitoring) sees the first request of each form as a `200` with a JSON body
-  instead of a `204`.
-- Only FormRequests are covered. Validation written in the controller
-  (`$request->validate([...])`) works as plain Precognition, without rules in
-  the browser.
-- If npm installs a second copy of `laravel-precognition` (the old
-  `laravel-precognition-vue-inertia` 0.x pins its own, for example), forms
-  that use that copy aren't covered.
+- A form's first validation waits for the server, since its response brings
+  the rules.
+- Server answers are reused until the field, or a field its rules name,
+  changes, or until an Inertia visit finishes. Until then, a closure or a Rule
+  class that reads another field can show a stale answer, and so can a submit
+  sent some other way, like with `useHttp()`.
+- Rules chosen in PHP from other input, like
+  `$this->input('type') === 'business'`, are learned from the first request
+  only. Use rules like `required_if` instead.
+- A FormRequest gets no rules if it overrides a method that changes its input
+  or validation, like `prepareForValidation()`, `validationData()` or `all()`,
+  or if it has `validator()`, `withValidator()`, `after()` or
+  `$stopOnFirstFailure`. Overriding `messages()`, `attributes()`,
+  `passedValidation()`, `failedValidation()`, `failedAuthorization()` or the
+  constructor is fine. Replacing Laravel's validator factory or resolver turns
+  the rules off for every form.
+- A FormRequest with more than 500 fields, or with rules over 1 MB, gets no
+  rules.
+- GET and DELETE forms, data with a file or `FormData`, and requests with
+  `params`, `data`, `url`, `baseURL`, `method` or a `Content-Type` in their
+  config work as plain Precognition.
+- The browser assumes Laravel's default `TrimStrings` and
+  `ConvertEmptyStringsToNull`, PHP's 8 MB `post_max_size`, and
+  laravel-precognition's own HTTP client. It doesn't know about middleware of
+  your own that changes the input, or client settings like axios interceptors,
+  `withSerializer()` and `useHttpClient()`.
+- The browser checks a field's browser rules before its server rules. So when
+  a browser rule fails and an earlier server rule fails too, like `unique` or a
+  rule whose message uses `:input`, the browser shows its own rule's message,
+  while Laravel shows the first one in the list. The field is invalid either
+  way.
+- If `Lang::handleMissingKeysUsing()` sets a callback that returns something
+  other than the key, Laravel's messages change, but the browser shows the
+  ones built without it.
+- With Inertia's `withAllErrors`, a field that fails in the browser only shows
+  its first message.
+- A field whose name has a comma, or characters outside ASCII, can't be
+  validated on its own, since `Precognition-Validate-Only` can't carry it.
+- Monitoring that watches responses sees a form's first request as a `200`
+  with a body instead of a `204`.
+- Every request with `Precognition-Rules: true` builds the rules, so rate limit
+  precognitive requests like any others.
 
 ## Troubleshooting
 
-### The response has no rules
+A form's first precognitive request should carry `Precognition-Rules: true`,
+and its response a `rules` object.
 
-Look at the first precognitive request of the form on the Network tab:
-
-| What you see | Why, and what to do |
+| What you see | What to check |
 |---|---|
-| No `Precognition-Rules` header in the request | The browser side isn't running. Check that `setupPrecognitionPlus()` is called before the app starts, and that `npm ls laravel-precognition` lists one copy. |
-| The header is there, the answer is a `204` | The server side isn't adding the rules. Check that `codenyra/precognition-plus` is installed (`composer show codenyra/precognition-plus`), that `PRECOGNITION_PLUS_ENABLED` isn't `false`, and that the route validates with a FormRequest. Run `php artisan config:clear` if the config is cached. |
-| The header is there, the answer is a `403`, a redirect or a `500` | Only `204` and `422` answers get rules. Fix what Laravel answered first; `authorize()` returning `false` gives the `403`. |
-| The request fails with a CORS error | Your API is on another origin and doesn't allow the `Precognition-Rules` header. Add it to `allowed_headers` in `config/cors.php`. |
-| A `422` without `rules` | Look in your log: an error while building the rules is reported there, and the response goes out without them. |
+| No `Precognition-Rules` header | `setupPrecognitionPlus()` runs before the app starts, and `npm ls laravel-precognition` lists one copy. Requests that work as plain Precognition never send it. |
+| The header, but no `rules` | The route uses `HandlePrecognitiveRequests` and a FormRequest, `PRECOGNITION_PLUS_ENABLED` isn't `false`, and none of the limitations above turns its rules off. Errors while building them go to your log. |
+| A `403`, a redirect or a `500` | Only `204` and `422` responses get rules, so fix what Laravel returned first. |
+| A CORS error | Add `Precognition-Rules` to `allowed_headers` in `config/cors.php`. |
+| A field always goes to the server | See [the rules](rules.md) for what always goes to the server. |
 
-### A field always goes to the server
-
-Check its rules against [the list](rules.md). Common reasons:
-
-- it has a rule the browser doesn't run, such as `unique`, a closure or a Rule
-  class of your own, and its browser rules pass, so the server has to answer;
-- it isn't in the FormRequest's rules at all, which is usually the case for
-  `password_confirmation` (see [the usage guide](usage.md#password-confirmation));
-- it is an array field written with `*`;
-- its `regex` uses a flag or syntax only PHP has, such as `[[:alpha:]]` or
-  `\h`.
-
-### A message differs from the server's
-
-Every message is built on the server, except that the browser fills in
-`:input` the way Laravel does, so this shouldn't happen. If you see it,
-please open an issue with the rule and the value.
-
-## Reporting a problem
-
-Issues go to [GitHub](https://github.com/codenyra/precognition-plus/issues).
-The rules of the FormRequest, the request and response from the Network tab,
-and your versions of Laravel, Inertia and `laravel-precognition` help most.
+Report a problem on
+[GitHub](https://github.com/codenyra/precognition-plus/issues), with the
+FormRequest's rules and the request and response from the Network tab.

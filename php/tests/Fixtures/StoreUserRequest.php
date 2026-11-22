@@ -40,8 +40,6 @@ class StoreUserRequest extends FormRequest
     {
         return [
             'name.required' => 'Tell us your name.',
-            'code.regex' => 'The code :input is not valid.',
-            'role.in' => ':input is not a role.',
         ];
     }
 

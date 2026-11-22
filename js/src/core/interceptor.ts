@@ -1,12 +1,14 @@
 import { client, type Config, type HttpResponse, HttpResponseError } from 'laravel-precognition'
-import { checkField, schemaKey } from './engine'
+import { browserRules } from '../browser_rules'
+import { checkField, hasQuery, received, schemaKey } from './engine'
 import type { ValidationSchema } from './types'
-import { getPath, isFile } from './utils'
-import { validators } from './validators'
+import { findPath, hasFile, hasOwn, isPlainObject } from './utils'
 
 type Errors = Record<string, string[]>
 type Send = (url: string, data?: Record<string, unknown>, config?: Config) => Promise<unknown>
 
+// Every method is wrapped so that a real submit (precognitive: false) clears the cache. GET and
+// DELETE send their data in the query string, so beyond that they're left to plain Precognition.
 const METHODS = ['get', 'post', 'put', 'patch', 'delete', 'query'] as const
 
 const HEADER = 'Precognition-Rules'
@@ -16,33 +18,44 @@ export function setupPrecognitionPlus(): () => void {
   let cache = new Map<string, { value: string; errors: Errors }>()
   const inflight = new Map<string, AbortController>()
 
-  let page: unknown
-  const onNavigate = (event: Event) => {
-    const url = (event as CustomEvent).detail?.page?.url
-    if (url === page) return
-    page = url
+  // A visit or a submit can change both the rules and the answers (think of a unique check), so
+  // drop them, and ignore late responses to requests sent before.
+  let generation = 0
+  const forget = () => {
     schemas = new Map()
     cache = new Map()
+    generation++
   }
-  globalThis.document?.addEventListener('inertia:navigate', onNavigate)
+  globalThis.document?.addEventListener('inertia:navigate', forget)
+  globalThis.document?.addEventListener('inertia:finish', forget)
 
-  // JSON.stringify turns every File into {}, so each file gets a number of its own and picking
-  // another file counts as a new value.
-  const fileIds = new WeakMap<Blob, number>()
-  let files = 0
-  const withFileIds = (_key: string, value: unknown) => {
-    if (!isFile(value)) return value
-    if (!fileIds.has(value)) fileIds.set(value, ++files)
-    return { file: fileIds.get(value) }
+  // A cached answer holds while the field and the fields its rules read keep their values. Values
+  // are tagged with their type, so a missing value, null and an object never look the same.
+  const tagged = (value: unknown): unknown => {
+    if (value === null) return ['null']
+    if (typeof value !== 'object') return [typeof value, typeof value === 'string' || typeof value === 'boolean' ? value : String(value)]
+    return Array.isArray(value) ? ['list', value.map(tagged)] : ['object', Object.entries(value).map(([key, item]) => [key, tagged(item)])]
   }
+  // reads keeps the serialized value of each path already read during one check.
+  const valueOf = (data: unknown, entry: string, schema: ValidationSchema, reads: Map<string, string>) =>
+    [entry, ...(schema[entry].depends ?? [])].map((path) => {
+      if (!reads.has(path)) {
+        const found = findPath(data, path)
+        reads.set(path, JSON.stringify(found ? tagged(found.value) : ['missing']))
+      }
+      return reads.get(path)
+    }).join(' ')
 
-  // A server answer holds while the field and the fields its rules name (required_if:type,...) keep
-  // their values.
-  const valueOf = (data: unknown, entry: string, schema?: ValidationSchema | null) =>
-    JSON.stringify([entry, ...(schema?.[entry]?.depends ?? [])].map((path) => getPath(data, path)), withFileIds)
-  const remember = (key: string, values: Map<string, string>, server: Errors) => {
+  // Only cache fields we have rules for, since we need their depends, and skip names with an
+  // escaped dot, which Laravel reads as a single key.
+  const cacheable = (schema: ValidationSchema, entry: string) =>
+    hasOwn(schema, entry) && ![entry, ...(schema[entry].depends ?? [])].some((path) => path.includes('\\'))
+  // Values over 10,000 characters aren't cached, so those fields go to the server every time.
+  const remember = (since: number, key: string, values: Map<string, string>, server: Errors) => {
+    if (since !== generation) return
     for (const [entry, value] of values) {
-      cache.set(`${key} ${entry}`, { value, errors: server[entry] ? { [entry]: server[entry] } : {} })
+      if (value.length > 10_000) continue
+      cache.set(`${key} ${entry}`, { value, errors: hasOwn(server, entry) ? { [entry]: server[entry] } : {} })
     }
   }
 
@@ -52,11 +65,32 @@ export function setupPrecognitionPlus(): () => void {
   >
 
   for (const method of METHODS) {
-    client[method] = (url, data = {}, config = {}) => {
-      const key = schemaKey(method, url)
+    const intercept: Send = (url, data = {}, config = {}) => {
+      const key = schemaKey(routedMethod(method, data), url)
       const only = config.only ?? config.validate
+      const since = generation
 
-      if (!only || config.precognitive === false) {
+      // Any new request for this form makes our pending check stale. laravel-precognition cancels
+      // its own requests the same way, but it can't cancel ours.
+      inflight.get(key)?.abort()
+      inflight.delete(key)
+
+      if (config.precognitive === false) {
+        return Promise.resolve(originals[method](url, data, config)).finally(forget)
+      }
+
+      // Leave it to plain Precognition when there's nothing to validate, the data isn't a plain
+      // object or holds a file, or the config changes what gets sent (params, data, url, baseURL,
+      // method or Content-Type).
+      if (
+        method === 'get' ||
+        method === 'delete' ||
+        !only ||
+        !isPlainObject(data) ||
+        hasFile(data) ||
+        (['params', 'data', 'url', 'baseURL', 'method'] as const).some((option) => config[option] !== undefined) ||
+        Object.keys(config.headers ?? {}).some((name) => name.toLowerCase() === 'content-type')
+      ) {
         return originals[method](url, data, config)
       }
 
@@ -67,13 +101,22 @@ export function setupPrecognitionPlus(): () => void {
           const rules = typeof response.data === 'object' ? response.data?.rules : undefined
           return rules && typeof rules === 'object' ? (rules as ValidationSchema) : null
         }
-        // The rules arrive with the answer, so keep a copy of what was sent to file the answer under.
-        const sent: unknown = JSON.parse(JSON.stringify(data, withFileIds))
+        // Don't cache answers when the data can't be serialized, like with a BigInt.
+        const first = received(data, hasQuery(url))
+        const copy = first?.data
         const learn = (response: HttpResponse, server: Errors = {}) => {
+          if (since !== generation) return
           const learned = rulesIn(response)
-          const entries = Array.from(only).filter((entry) => !entry.includes('*'))
+          // Without Inertia visits to clear it, the cache starts over once it holds 50 URLs.
+          if (!schemas.has(key) && schemas.size >= 50) {
+            schemas = new Map()
+            cache = new Map()
+          }
           schemas.set(key, learned)
-          remember(key, new Map(entries.map((entry) => [entry, valueOf(sent, entry, learned)])), server)
+          if (first === null || learned === null) return
+          const entries = Array.from(only).filter((entry) => cacheable(learned, entry))
+          const reads = new Map<string, string>()
+          remember(since, key, new Map(entries.map((entry) => [entry, valueOf(copy, entry, learned, reads)])), server)
         }
 
         return originals[method](url, data, {
@@ -102,10 +145,13 @@ export function setupPrecognitionPlus(): () => void {
         return originals[method](url, data, config)
       }
 
-      const local: Errors = {}
-      const kept: Errors = {}
+      // No prototype, so a field named __proto__ keeps its errors.
+      const local: Errors = Object.create(null)
+      const kept: Errors = Object.create(null)
       const send: string[] = []
       const values = new Map<string, string>()
+      const sent = received(data, hasQuery(url))
+      const reads = new Map<string, string>()
 
       for (const entry of Array.from(only)) {
         if (entry.includes('*')) {
@@ -113,16 +159,22 @@ export function setupPrecognitionPlus(): () => void {
           continue
         }
 
-        const { message, server } = checkField(schema, validators, entry, data)
+        const { message, server } = checkField(schema, browserRules, entry, data, sent)
 
-        if (message) {
+        // An empty message still counts as a failure, like in Laravel.
+        if (message !== null) {
           local[entry] = [message]
           continue
         }
 
         if (!server) continue
 
-        const value = valueOf(data, entry, schema)
+        if (sent === null || !cacheable(schema, entry)) {
+          send.push(entry)
+          continue
+        }
+
+        const value = valueOf(sent.data, entry, schema, reads)
         const cached = cache.get(`${key} ${entry}`)
 
         if (cached?.value === value) {
@@ -132,9 +184,6 @@ export function setupPrecognitionPlus(): () => void {
           values.set(entry, value)
         }
       }
-
-      inflight.get(key)?.abort()
-      inflight.delete(key)
 
       const errors = (server: Errors = {}) => ({ ...kept, ...server, ...local })
 
@@ -151,13 +200,13 @@ export function setupPrecognitionPlus(): () => void {
         only: send,
         signal: controller.signal,
         onPrecognitionSuccess: (response) => {
-          remember(key, values, {})
+          remember(since, key, values, {})
           const all = errors()
           return Object.keys(all).length ? fail(config, all) : (config.onPrecognitionSuccess?.(response) ?? response)
         },
         onValidationError: (response) => {
           const server = (response.data?.errors ?? {}) as Errors
-          remember(key, values, server)
+          remember(since, key, values, server)
           return fail(config, errors(server), response)
         },
         onFinish: () => {
@@ -166,12 +215,27 @@ export function setupPrecognitionPlus(): () => void {
         },
       })
     }
+
+    // If the data can't be walked (a cycle, for example), fall back to plain Precognition.
+    client[method] = (url, data, config) => {
+      try {
+        return intercept(url, data, config)
+      } catch {
+        return originals[method](url, data, config)
+      }
+    }
   }
 
   return () => {
     for (const method of METHODS) client[method] = originals[method]
-    globalThis.document?.removeEventListener('inertia:navigate', onNavigate)
+    globalThis.document?.removeEventListener('inertia:navigate', forget)
+    globalThis.document?.removeEventListener('inertia:finish', forget)
   }
+}
+
+// The method Laravel routes a POST by. A string _method field overrides it.
+function routedMethod(method: string, data: unknown): string {
+  return method === 'post' && isPlainObject(data) && typeof data._method === 'string' ? data._method : method
 }
 
 function fail(config: Config, errors: Errors, base?: HttpResponse): unknown {

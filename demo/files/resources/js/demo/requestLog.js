@@ -41,8 +41,8 @@ export function togglePlus() {
 
 const originalFetch = window.fetch.bind(window)
 
-// True while the latest request is the one that fetches the rules, which no
-// browser check came before.
+// True while the latest request is the first one, which fetches the rules
+// before any browser check.
 export const fetchingRules = ref(false)
 
 window.fetch = (input, init = {}) => {

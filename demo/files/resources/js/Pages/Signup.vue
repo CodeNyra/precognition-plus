@@ -49,7 +49,7 @@ function check(field) {
             } else {
                 entry.result = !sent ? 'browser' : plusEnabled.value && fetchingRules.value ? 'server · rules loaded' : 'server'
             }
-            // Checks the debounce folded into this one never finish on their own.
+            // Checks the debounce merged into this one never finish on their own, so drop them.
             log.filter((other) => other.type === 'check' && !other.result && other.id < entry.id).forEach(removeEntry)
         },
     }

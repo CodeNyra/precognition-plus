@@ -11,14 +11,13 @@ export interface FieldSchema {
   server: boolean
   nullable: boolean
   type: SizeType
+  sometimes?: boolean
   depends?: string[]
-  values?: Record<string, string>
 }
 
 export type ValidationSchema = Record<string, FieldSchema>
 
 export interface RuleContext {
-  attribute: string
   field: FieldSchema
   other(path: string): unknown
 }
