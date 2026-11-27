@@ -24,8 +24,13 @@ export function clearLog() {
 
 export function startPlus(setupPrecognitionPlus) {
     install = setupPrecognitionPlus
-    uninstall = install()
-    plusEnabled.value = true
+
+    // ?plus=off starts with plain Laravel Precognition, and the switch can still turn Plus on.
+    if (new URLSearchParams(window.location.search).get('plus') !== 'off') {
+        uninstall = install()
+    }
+
+    plusEnabled.value = Boolean(uninstall)
 }
 
 export function togglePlus() {

@@ -33,6 +33,11 @@ const fields = [
     { name: 'invite', label: 'Invite code', side: 'server', rules: 'nullable|new ValidInviteCode', hint: 'LARAVEL or INERTIA (the server takes 0.4 s)' },
 ]
 
+// ?compact shows four fields and how many requests went to the server, so two pages, one with
+// ?plus=off, can sit side by side. demo/scripts/record-gif.mjs records docs/demo.gif from them.
+const compact = new URLSearchParams(window.location.search).has('compact')
+const shownFields = compact ? fields.filter((field) => ['name', 'age', 'postcode', 'email'].includes(field.name)) : fields
+
 let requestsSeen = 0
 
 function check(field) {
@@ -82,8 +87,8 @@ watch(
 </script>
 
 <template>
-    <main class="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-        <header class="mb-8">
+    <main :class="compact ? 'p-3' : 'mx-auto max-w-6xl px-4 py-10 sm:px-6'">
+        <header v-if="!compact" class="mb-8">
             <div>
                 <p class="text-xs text-stone-500">Laravel · Inertia · Vue</p>
                 <h1 class="mt-1 text-3xl font-semibold tracking-tight">Precognition Plus</h1>
@@ -97,7 +102,12 @@ watch(
             </div>
         </header>
 
-        <div class="mb-4 flex flex-wrap items-center gap-x-5 gap-y-3 text-xs text-stone-600">
+        <p v-if="compact" class="mb-2 flex items-center gap-2 text-sm font-semibold">
+            <span class="size-2 rounded-full" :class="plusEnabled ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+            {{ plusEnabled ? 'With Precognition Plus' : 'Plain Laravel Precognition' }}
+        </p>
+
+        <div v-else class="mb-4 flex flex-wrap items-center gap-x-5 gap-y-3 text-xs text-stone-600">
             <span v-for="side in sides" :key="side.label" class="inline-flex items-center gap-1.5">
                 <span class="size-2 rounded-full" :class="side.dot"></span>{{ side.label }}
             </span>
@@ -119,10 +129,10 @@ watch(
                 </div>
 
                 <div class="divide-y divide-stone-100">
-                    <div v-for="field in fields" :key="field.name" class="px-5 py-4">
+                    <div v-for="field in shownFields" :key="field.name" :class="compact ? 'px-4 py-2.5' : 'px-5 py-4'">
                         <div class="mb-1.5 flex items-center justify-between gap-2">
                             <label :for="field.name" class="text-sm font-medium">{{ field.label }}</label>
-                            <span class="rounded px-1.5 py-0.5 text-[11px] ring-1 ring-inset" :class="sides[field.side].class">{{ sides[field.side].label }}</span>
+                            <span v-if="!compact" class="rounded px-1.5 py-0.5 text-[11px] ring-1 ring-inset" :class="sides[field.side].class">{{ sides[field.side].label }}</span>
                         </div>
 
                         <select
@@ -148,13 +158,18 @@ watch(
                             @change="check(field)"
                         />
 
-                        <code class="mt-1.5 block font-mono text-xs text-stone-500">{{ field.rules }}</code>
+                        <code v-if="!compact" class="mt-1.5 block font-mono text-xs text-stone-500">{{ field.rules }}</code>
                         <p v-if="form.invalid(field.name)" class="mt-1 text-sm text-red-600">{{ form.errors[field.name] }}</p>
-                        <p v-else-if="field.hint" class="mt-1 font-mono text-xs text-stone-400">// {{ field.hint }}</p>
+                        <p v-else-if="field.hint && !compact" class="mt-1 font-mono text-xs text-stone-400">// {{ field.hint }}</p>
                     </div>
                 </div>
 
-                <div class="flex flex-wrap items-center gap-3 border-t border-stone-200 bg-stone-50 px-5 py-3">
+                <div v-if="compact" class="border-t border-stone-200 bg-stone-900 px-4 py-3 font-mono text-sm text-stone-300">
+                    <span class="text-2xl font-semibold" :class="plusEnabled ? 'text-emerald-400' : 'text-amber-400'">{{ serverRequests }}</span>
+                    {{ serverRequests === 1 ? 'request' : 'requests' }} to the server
+                </div>
+
+                <div v-else class="flex flex-wrap items-center gap-3 border-t border-stone-200 bg-stone-50 px-5 py-3">
                     <button type="submit" class="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="form.processing">
                         Sign up
                     </button>
@@ -163,7 +178,7 @@ watch(
                 </div>
             </form>
 
-            <aside class="overflow-hidden rounded-lg bg-stone-900 font-mono text-sm text-stone-300 lg:sticky lg:top-6 lg:self-start">
+            <aside v-if="!compact" class="overflow-hidden rounded-lg bg-stone-900 font-mono text-sm text-stone-300 lg:sticky lg:top-6 lg:self-start">
                 <div class="flex items-center justify-between border-b border-stone-700 px-4 py-2 text-xs">
                     <div class="flex items-center gap-1.5">
                         <span class="size-2.5 rounded-full bg-stone-600"></span>

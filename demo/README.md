@@ -24,8 +24,24 @@ changed file across while you work.
 | `app/Http/Requests/SignupRequest.php` | The form's rules, one field of each kind. |
 | `app/Rules/ValidInviteCode.php` | A Rule object, so its field always asks the server. |
 | `routes/web.php` | The page, and the route that saves a signup. |
-| `resources/js/Pages/Signup.vue` | The form, a stock `useForm('post', '/signup')`. |
+| `resources/js/Pages/Signup.vue` | The form, a stock `useForm('post', '/signup')`. With `?compact` it shows four fields and how many requests went to the server. |
 | `resources/js/app.js` | `setupPrecognitionPlus()`, plus the on/off switch. |
-| `resources/js/demo/requestLog.js` | The log panel. A real app doesn't need it. |
+| `resources/js/demo/requestLog.js` | The log panel. A real app doesn't need it. `?plus=off` starts with plain Laravel Precognition. |
 | `resources/views/app.blade.php` | Inertia's page template. |
 | `bootstrap/app.php`, `vite.config.js` | The skeleton's files with Inertia and Vue added. |
+
+## The README's GIF
+
+`docs/demo.gif` shows the same form filled in with plain Laravel Precognition
+and with Precognition Plus, side by side, with the number of requests each one
+sends to the server. To record it again, start the demo, then run the script in
+`scripts/`, which needs ffmpeg:
+
+```bash
+cd demo/scripts
+npm install && npx playwright install chromium
+node record-gif.mjs http://localhost:8000
+```
+
+It opens `/?compact&plus=off` and `/?compact` in two pages, types the same
+values into both, and joins the two recordings into one GIF.
