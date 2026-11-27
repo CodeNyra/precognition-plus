@@ -1,5 +1,9 @@
 # Precognition Plus
 
+**Same Laravel Precognition, far fewer server requests. No changes to your FormRequests.**
+
+![The same form filled in twice. Plain Laravel Precognition sends 6 requests to the server, and Precognition Plus sends 2.](docs/demo.gif)
+
 Precognition Plus runs the simple rules of your FormRequests in the browser, so a Laravel Precognition form only asks the server about the fields that need it. Rules like `required`, `max`, `email`, `in` and `regex` are checked in the browser, while `unique`, `exists`, closures and the like still run on the server.
 
 | | |
